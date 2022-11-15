@@ -1,0 +1,10 @@
+**/__pycache__/**
+outputs
+l5_visualization/test
+.venv
+.vscode
+s5_visualization/datasets
+s5_visualization/trained_models/*.pt
+s7_detection/data
+outputs
+s7_detection/notebooks/lightning_logs

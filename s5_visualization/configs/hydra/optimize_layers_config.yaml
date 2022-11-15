@@ -1,0 +1,23 @@
+hydra:
+  run:
+    dir: ${exp_dir}
+exp_dir: outputs/${hydra.job.name}/${hydra.job.name}_${now:%Y-%m-%d_%H-%M-%S}
+
+model_path: /home/devel/ws.leonid/portability_test/seminars/l5_visualization/outputs/cifar10_train/cifar10_train_2022-11-01_09-29-31
+
+layers_to_optimize:
+  - 'conv2d'
+  - 'conv2d_1'
+  - 'conv2d_2'
+  - 'conv2d_3'
+  - 'conv2d_4'
+  - 'conv2d_5'
+
+
+optimize_center: True
+n_images_per_filter: 3
+steps: 300
+step_size: 0.01
+reg_coef: 0.01
+
+resize_image_to: [128, 128]

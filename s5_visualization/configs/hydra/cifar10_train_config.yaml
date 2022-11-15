@@ -1,0 +1,16 @@
+hydra:
+  run:
+    dir: ${exp_dir}
+exp_dir: outputs/${hydra.job.name}/${hydra.job.name}_${now:%Y-%m-%d_%H-%M-%S}
+
+
+
+epochs: 20
+batch_size: 32
+
+model:
+  module_name: l5_visualization.scripts.models
+  class_name: simple_model
+  args:
+    input_shape: [32, 32, 3]
+    num_classes: 10
