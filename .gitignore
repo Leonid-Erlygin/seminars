@@ -1,6 +1,6 @@
 **/__pycache__/**
 outputs
-l5_visualization/test
+s5_visualization/test
 .venv
 .vscode
 s5_visualization/datasets
@@ -8,3 +8,5 @@ s5_visualization/trained_models/*.pt
 s7_detection/data
 outputs
 s7_detection/notebooks/lightning_logs
+s12_self-supervised
+docker_scripts/launch_container.sh

@@ -1,0 +1,24 @@
+name: base
+channels:
+  - pytorch
+  - anaconda
+  - conda-forge
+  - defaults
+dependencies:
+  - pytorch::pytorch=1.10.2=py3.9_cuda11.3_cudnn8.2.0_0
+  - pytorch::torchvision=0.11.3=py39_cu113
+  - cudatoolkit=11.3.1
+  - psutil
+  - python=3.9.7
+  - pip=21.2.4
+  - openblas-devel
+  - tqdm
+  - nose
+  - ipykernel
+  - pytorch-lightning
+  - cython
+  - pysoundfile
+  - pip:
+    - segmentation-models-pytorch==0.3.0
+    - progressbar2
+    - matplotlib

@@ -1,7 +1,7 @@
 import sys
 
 sys.path.append(
-    "../../../seminars/l5_visualization/vis_tools/pytorch_cnn_visualizations/src"
+    "../../../seminars/s5_visualization/vis_tools/pytorch_cnn_visualizations/src"
 )
 
 
