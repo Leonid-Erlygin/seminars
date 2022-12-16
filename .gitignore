@@ -8,5 +8,5 @@ s5_visualization/trained_models/*.pt
 s7_detection/data
 outputs
 s7_detection/notebooks/lightning_logs
-s12_self-supervised
+s12_self-supervised/data
 docker_scripts/launch_container.sh
