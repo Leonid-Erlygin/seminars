@@ -8,23 +8,37 @@ BATCH_NORM_DECAY = 0.9  # == pytorch's default value as well
 
 class BatchNormRelu(nn.Sequential):
     def __init__(self, num_channels, relu=True):
-        super().__init__(nn.BatchNorm2d(num_channels, eps=BATCH_NORM_EPSILON), nn.ReLU() if relu else nn.Identity())
+        super().__init__(
+            nn.BatchNorm2d(num_channels, eps=BATCH_NORM_EPSILON),
+            nn.ReLU() if relu else nn.Identity(),
+        )
 
 
 def conv(in_channels, out_channels, kernel_size=3, stride=1, bias=False):
-    return nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
-                     stride=stride, padding=(kernel_size - 1) // 2, bias=bias)
+    return nn.Conv2d(
+        in_channels,
+        out_channels,
+        kernel_size=kernel_size,
+        stride=stride,
+        padding=(kernel_size - 1) // 2,
+        bias=bias,
+    )
 
 
 class SelectiveKernel(nn.Module):
     def __init__(self, in_channels, out_channels, stride, sk_ratio, min_dim=32):
         super().__init__()
         assert sk_ratio > 0.0
-        self.main_conv = nn.Sequential(conv(in_channels, 2 * out_channels, stride=stride),
-                                       BatchNormRelu(2 * out_channels))
+        self.main_conv = nn.Sequential(
+            conv(in_channels, 2 * out_channels, stride=stride),
+            BatchNormRelu(2 * out_channels),
+        )
         mid_dim = max(int(out_channels * sk_ratio), min_dim)
-        self.mixing_conv = nn.Sequential(conv(out_channels, mid_dim, kernel_size=1), BatchNormRelu(mid_dim),
-                                         conv(mid_dim, 2 * out_channels, kernel_size=1))
+        self.mixing_conv = nn.Sequential(
+            conv(out_channels, mid_dim, kernel_size=1),
+            BatchNormRelu(mid_dim),
+            conv(mid_dim, 2 * out_channels, kernel_size=1),
+        )
 
     def forward(self, x):
         x = self.main_conv(x)
@@ -39,12 +53,16 @@ class Projection(nn.Module):
     def __init__(self, in_channels, out_channels, stride, sk_ratio=0):
         super().__init__()
         if sk_ratio > 0:
-            self.shortcut = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)),
-                                          # kernel_size = 2 => padding = 1
-                                          nn.AvgPool2d(kernel_size=2, stride=stride, padding=0),
-                                          conv(in_channels, out_channels, kernel_size=1))
+            self.shortcut = nn.Sequential(
+                nn.ZeroPad2d((0, 1, 0, 1)),
+                # kernel_size = 2 => padding = 1
+                nn.AvgPool2d(kernel_size=2, stride=stride, padding=0),
+                conv(in_channels, out_channels, kernel_size=1),
+            )
         else:
-            self.shortcut = conv(in_channels, out_channels, kernel_size=1, stride=stride)
+            self.shortcut = conv(
+                in_channels, out_channels, kernel_size=1, stride=stride
+            )
         self.bn = BatchNormRelu(out_channels, relu=False)
 
     def forward(self, x):
@@ -54,13 +72,20 @@ class Projection(nn.Module):
 class BottleneckBlock(nn.Module):
     expansion = 4
 
-    def __init__(self, in_channels, out_channels, stride, sk_ratio=0, use_projection=False):
+    def __init__(
+        self, in_channels, out_channels, stride, sk_ratio=0, use_projection=False
+    ):
         super().__init__()
         if use_projection:
-            self.projection = Projection(in_channels, out_channels * 4, stride, sk_ratio)
+            self.projection = Projection(
+                in_channels, out_channels * 4, stride, sk_ratio
+            )
         else:
             self.projection = nn.Identity()
-        ops = [conv(in_channels, out_channels, kernel_size=1), BatchNormRelu(out_channels)]
+        ops = [
+            conv(in_channels, out_channels, kernel_size=1),
+            BatchNormRelu(out_channels),
+        ]
         if sk_ratio > 0:
             ops.append(SelectiveKernel(out_channels, out_channels, stride, sk_ratio))
         else:
@@ -78,10 +103,14 @@ class BottleneckBlock(nn.Module):
 class Blocks(nn.Module):
     def __init__(self, num_blocks, in_channels, out_channels, stride, sk_ratio=0):
         super().__init__()
-        self.blocks = nn.ModuleList([BottleneckBlock(in_channels, out_channels, stride, sk_ratio, True)])
+        self.blocks = nn.ModuleList(
+            [BottleneckBlock(in_channels, out_channels, stride, sk_ratio, True)]
+        )
         self.channels_out = out_channels * BottleneckBlock.expansion
         for _ in range(num_blocks - 1):
-            self.blocks.append(BottleneckBlock(self.channels_out, out_channels, 1, sk_ratio))
+            self.blocks.append(
+                BottleneckBlock(self.channels_out, out_channels, 1, sk_ratio)
+            )
 
     def forward(self, x):
         for b in self.blocks:
@@ -153,28 +182,35 @@ class ContrastiveHead(nn.Module):
         return x
 
 
-def get_resnet(depth=50, width_multiplier=1, sk_ratio=0):  # sk_ratio=0.0625 is recommended
-    layers = {50: [3, 4, 6, 3], 101: [3, 4, 23, 3], 152: [3, 8, 36, 3], 200: [3, 24, 36, 3]}[depth]
+def get_resnet(
+    depth=50, width_multiplier=1, sk_ratio=0
+):  # sk_ratio=0.0625 is recommended
+    layers = {
+        50: [3, 4, 6, 3],
+        101: [3, 4, 23, 3],
+        152: [3, 8, 36, 3],
+        200: [3, 24, 36, 3],
+    }[depth]
     resnet = ResNet(layers, width_multiplier, sk_ratio)
     return resnet, ContrastiveHead(resnet.channels_out)
 
 
 def name_to_params(checkpoint):
-    sk_ratio = 0.0625 if '_sk1' in checkpoint else 0
-    if 'r50_' in checkpoint:
+    sk_ratio = 0.0625 if "_sk1" in checkpoint else 0
+    if "r50_" in checkpoint:
         depth = 50
-    elif 'r101_' in checkpoint:
+    elif "r101_" in checkpoint:
         depth = 101
-    elif 'r152_' in checkpoint:
+    elif "r152_" in checkpoint:
         depth = 152
     else:
         raise NotImplementedError
 
-    if '_1x_' in checkpoint:
+    if "_1x_" in checkpoint:
         width = 1
-    elif '_2x_' in checkpoint:
+    elif "_2x_" in checkpoint:
         width = 2
-    elif '_3x_' in checkpoint:
+    elif "_3x_" in checkpoint:
         width = 3
     else:
         raise NotImplementedError
