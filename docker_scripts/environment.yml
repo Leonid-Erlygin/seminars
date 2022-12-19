@@ -22,3 +22,5 @@ dependencies:
     - segmentation-models-pytorch==0.3.0
     - progressbar2
     - matplotlib
+    - torchsummary
+    - scipy
