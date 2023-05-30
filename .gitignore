@@ -8,4 +8,3 @@ s5_visualization/trained_models/*.pt
 outputs
 s7_detection/notebooks/lightning_logs
 data
-docker_scripts/launch_container.sh

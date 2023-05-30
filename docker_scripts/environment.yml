@@ -5,22 +5,40 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - pytorch::pytorch=1.10.2=py3.9_cuda11.3_cudnn8.2.0_0
-  - pytorch::torchvision=0.11.3=py39_cu113
-  - cudatoolkit=11.3.1
   - psutil
   - python=3.9.7
-  - pip=21.2.4
+  - conda-forge::scikit-image
+  - conda-forge::termcolor
+  - conda-forge::tensorboard
+  - conda-forge::black
+  - conda-forge::hydra-core
+  - anaconda::ipython
+  - anaconda::path
+  - pip
   - openblas-devel
   - tqdm
   - nose
-  - ipykernel
-  - pytorch-lightning
   - cython
   - pysoundfile
   - pip:
-    - segmentation-models-pytorch==0.3.0
+    - wandb
+    - tabulate
+    - onnxruntime-gpu
+    - glob2
+    - jsonargparse[signatures]
+    - torchvision
     - progressbar2
-    - matplotlib
-    - torchsummary
+    - exman~=0.1.9
+    - easydict~=1.9
+    - pytorch-lightning==2.0.0
+    - opencv-python~=4.5.1.48
+    - mxnet
+    - numpy==1.19.5
+    - PyYAML~=5.4.1
     - scipy
+    - pandas~=1.2.3
+    - scikit-learn~=0.24.1
+    - tqdm~=4.59.0
+    - imageio~=2.9.0
+    - matplotlib~=3.3.4
+    - seaborn~=0.11.1
