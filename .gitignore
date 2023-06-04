@@ -8,3 +8,6 @@ s5_visualization/trained_models/*.pt
 outputs
 s7_detection/notebooks/lightning_logs
 data
+sber_homeworks/homework
+sber_homeworks/hw1/cifar_data
+sber_homeworks/hw1/vp_images
