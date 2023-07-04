@@ -1,6 +1,4 @@
 import torch
-import copy
-import torch.nn as nn
 import numpy as np
 
 from torch.nn import Module
@@ -8,9 +6,9 @@ from torchvision.transforms import transforms
 from nn_interpretability.interpretation.lrp.lrp_base import LRPBase
 
 
-class LRPEpsilon(LRPBase):
+class LRP0(LRPBase):
     """
-    Implements the decision-based interpretability method "LRP-epsilon"
+    Implements the decision-based interpretability method "LRP-0"
     as outlined in the paper "Layer-Wise Relevance Propagation: An Overview"
     by Montavon et al.
 
@@ -34,7 +32,7 @@ class LRPEpsilon(LRPBase):
         :param input_z_beta: Switch for using LRP z^beta rule at input layers.
         :param treat_avgpool: Switch for treat max pooling like average pooling described in Montavon's paper.
         """
-        super(LRPEpsilon, self).__init__(model, classes, preprocess)
+        super(LRP0, self).__init__(model, classes, preprocess)
         self.visualize_layer = visualize_layer
         self.input_z_beta = input_z_beta
         self.treat_avgpool = treat_avgpool
@@ -67,12 +65,11 @@ class LRPEpsilon(LRPBase):
         # LRP　backward passincr_p
         for l in range(self.visualize_layer, L)[::-1]:
             self.A[l] = (self.A[l].detach().to(self.device)).requires_grad_(True)
-            incr = lambda z: z + 1e-9 + 0.1 * ((z**2).mean() ** 0.5).detach()
+            incr = lambda z: z
 
             if isinstance(self.LRP_layers[l], torch.nn.MaxPool2d) or isinstance(
                 self.LRP_layers[l], torch.nn.AdaptiveAvgPool2d
             ):
-
                 if self.treat_avgpool:
                     # treat max pooling like average pooling described in Montavon's paper
                     self.LRP_layers[l] = torch.nn.AvgPool2d(2)
@@ -84,7 +81,6 @@ class LRPEpsilon(LRPBase):
                 self.Relevance[l] = (self.A[l] * c).detach()  # step 4
 
             elif isinstance(self.LRP_layers[l], torch.nn.Conv2d):
-
                 z = incr(self.LRP_layers[l].forward(self.A[l]))  # step 1
                 s = (self.Relevance[l + 1] / z).detach()  # step 2
                 (z * s).sum().backward()

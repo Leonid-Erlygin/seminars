@@ -71,7 +71,6 @@ class LRPGamma(LRPBase):
             if isinstance(self.LRP_layers[l], torch.nn.MaxPool2d) or isinstance(
                 self.LRP_layers[l], torch.nn.AdaptiveAvgPool2d
             ):
-
                 if self.treat_avgpool:
                     # treat max pooling like average pooling described in Montavon's paper
                     self.LRP_layers[l] = torch.nn.AvgPool2d(2)

@@ -51,7 +51,6 @@ def get_explanations(
     image_category: int,
     save_path: Path,
 ):
-
     INTEGRATED_GRAD_STEPS = 10
     image_shape = image_unchanged.size
 

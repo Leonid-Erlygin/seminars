@@ -40,7 +40,6 @@ class ActivationOptimizer(tf.Module):
         input_signature=(tf.TensorSpec(shape=[None, None, 3], dtype=tf.float32),)
     )
     def __call__(self, image):
-
         loss = tf.constant(0.0)
         for _ in tf.range(self.steps):
             with tf.GradientTape() as tape:
@@ -75,7 +74,6 @@ class DeepDream(tf.Module):
         )
     )
     def __call__(self, image, steps, step_size):
-
         loss = tf.constant(0.0)
         for _ in tf.range(steps):
             with tf.GradientTape() as tape:
