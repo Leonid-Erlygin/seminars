@@ -1,4 +1,5 @@
-FROM nvidia/cuda:11.3.1-base-ubuntu20.04
+FROM nvcr.io/nvidia/cuda:12.1.1-cudnn8-devel-ubuntu20.04
+ENV PATH /usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}
 
 # Remove any third-party apt sources to avoid issues with expiring keys.
 RUN rm -f /etc/apt/sources.list.d/*.list
