@@ -14,3 +14,4 @@ sber_homeworks/hw1/cifar_data
 sber_homeworks/hw1/vp_images
 lightning_logs
 spring_2023/test
+*.pt
