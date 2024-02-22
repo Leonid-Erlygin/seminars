@@ -3,6 +3,7 @@ Created on Mon Nov 21 21:57:29 2017
 
 @author: Utku Ozbulak - github.com/utkuozbulak
 """
+
 import os
 from PIL import Image
 

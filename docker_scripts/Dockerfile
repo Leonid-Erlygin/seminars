@@ -30,9 +30,9 @@ WORKDIR /app
 
 
 USER root
-RUN groupadd -g 1134 erlygin
+RUN groupadd -g 1005 erlygin
 
-RUN adduser --disabled-password --uid 1133 --gid 1134 --gecos '' --shell /bin/bash erlygin \
+RUN adduser --disabled-password --uid 1005 --gid 1005 --gecos '' --shell /bin/bash erlygin \
  && chown -R erlygin:erlygin /app
 RUN echo "erlygin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-erlygin
 USER erlygin

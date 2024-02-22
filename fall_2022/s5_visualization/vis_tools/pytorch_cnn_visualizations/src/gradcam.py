@@ -3,6 +3,7 @@ Created on Thu Oct 26 11:06:51 2017
 
 @author: Utku Ozbulak - github.com/utkuozbulak
 """
+
 from PIL import Image
 import numpy as np
 import torch

@@ -3,6 +3,7 @@ Created on Wed Jun 19 17:12:04 2019
 
 @author: Utku Ozbulak - github.com/utkuozbulak
 """
+
 from misc_functions import (
     get_example_params,
     convert_to_grayscale,

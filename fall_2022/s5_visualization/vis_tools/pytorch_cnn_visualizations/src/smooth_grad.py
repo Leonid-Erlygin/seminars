@@ -3,6 +3,7 @@ Created on Wed Mar 28 10:12:13 2018
 
 @author: Utku Ozbulak - github.com/utkuozbulak
 """
+
 import numpy as np
 
 from torch.autograd import Variable
