@@ -16,3 +16,5 @@ lightning_logs
 spring_2023/test
 *.pt
 *.png
+*.csv
+BayesOpt_tutorial
