@@ -29,16 +29,19 @@ RUN mkdir /app
 WORKDIR /app
 
 
+# set theese arg's when using docker build
+ARG GID
+ARG UID
+ARG NAME
 USER root
-RUN groupadd -g 1005 erlygin
 
-RUN adduser --disabled-password --uid 1005 --gid 1005 --gecos '' --shell /bin/bash erlygin \
- && chown -R erlygin:erlygin /app
-RUN echo "erlygin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-erlygin
-USER erlygin
+RUN groupadd -g ${GID} ${NAME}
+RUN adduser --disabled-password --force-badname --uid ${UID} --gid ${GID} --gecos '' --shell /bin/bash ${NAME} \
+ && chown -R ${NAME}:${NAME} /app
+RUN echo "${NAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-${NAME}
+USER ${NAME}
 
-ENV HOME=/home/erlygin
-
+ENV HOME=/home/${NAME}
 
 
 RUN mkdir $HOME/.cache $HOME/.config \

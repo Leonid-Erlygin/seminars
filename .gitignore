@@ -17,4 +17,7 @@ spring_2023/test
 *.pt
 *.png
 *.csv
+*.zip
 BayesOpt_tutorial
+fall_2024/s4/est_hourly.paruqet
+fall_2024/s4/=4.2.0
