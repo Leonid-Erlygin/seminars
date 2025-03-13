@@ -3,6 +3,7 @@ outputs
 s5_visualization/test
 .venv
 .vscode
+misc
 homework_solutions
 s5_visualization/datasets
 s5_visualization/trained_models/*.pt
