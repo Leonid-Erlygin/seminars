@@ -26,6 +26,7 @@ dependencies:
     - tabulate
     - onnxruntime-gpu
     - glob2
+    - gpytorch
     - jsonargparse[signatures]
     - torchvision
     - progressbar2
