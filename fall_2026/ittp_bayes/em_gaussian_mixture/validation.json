@@ -1,0 +1,62 @@
+{
+  "title": "EM алгоритм. Модель гауссовской смеси.",
+  "date": "2026-10-27",
+  "notebooks": {
+    "student": {
+      "schema_valid": true,
+      "clean_kernel_execution_passed": true,
+      "code_cells": 23,
+      "total_cells": 48,
+      "outputs_preserved": false,
+      "figures": 0
+    },
+    "solutions": {
+      "schema_valid": true,
+      "clean_kernel_execution_passed": true,
+      "code_cells": 23,
+      "total_cells": 49,
+      "outputs_preserved": true,
+      "figures": 13,
+      "recorded_audit_tables": [
+        "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| Среднее + дисперсия | -0.0026 | 0.0115 |\n| Предложенный GMM | 0.9889 | 0.9846 |\n| EM: мультиномиальная смесь | 0.9403 | 0.9235 |\n| Четыре момента | 0.9903 | 0.9850 |",
+        "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| W1: медоиды | 0.7696 | 0.7669 |",
+        "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| VAE(3) → GMM | 0.9467 | 0.9377 |"
+      ]
+    }
+  },
+  "runtime_checks": [
+    "E-step analytic probabilities, normalization and extreme tails",
+    "weighted M-step and exact variance floor",
+    "EM ascent and returned final likelihood",
+    "multinomial MAP alpha-1, normalization, count precision and ascent",
+    "inductive assignment does not depend on other test objects",
+    "discrete W1 analytic cases and agreement with scipy",
+    "VAE training and decoder normalization"
+  ],
+  "execution_environment": {
+    "python": "3.9.7",
+    "numpy": "1.19.5",
+    "scipy": "1.10.1",
+    "scikit-learn": "0.24.2",
+    "torch": "2.4.1+cu121",
+    "device": "CPU",
+    "blas_threads": 1,
+    "vae_torch_threads": 2
+  },
+  "pdf": {
+    "compiled_from_latex": true,
+    "engine": "pdfLaTeX (TinyTeX)",
+    "pages": 13,
+    "compile_errors": 0,
+    "compile_warnings": 0,
+    "overfull_boxes": 0,
+    "missing_glyphs": 0,
+    "visual_review_passed": true
+  },
+  "sha256": {
+    "em_gaussian_mixture_student.ipynb": "a23306aa14d2b4f2de8b32327bd9d871dd0448caff336665c14cebfdbbd2d9b5",
+    "em_teachers_guide.pdf": "4561e5e051ec442afdc08d931e08597bab13be453b56bbff4296d705b5c3b310",
+    "em_gaussian_mixture_solutions.ipynb": "d6ca899d124595c86357dc665f85103f1445cc287efa523ca002bf42e27ab35f",
+    "em_teachers_guide.tex": "53265e8ba390998f12661387cc5018f9c61387a3e8c53ea9641680152ddbd399"
+  }
+}

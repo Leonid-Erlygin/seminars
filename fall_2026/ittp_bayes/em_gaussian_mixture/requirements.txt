@@ -1,0 +1,7 @@
+numpy>=1.19.5
+scipy>=1.6
+matplotlib>=3.3
+scikit-learn>=0.24
+ipython>=7
+ipykernel>=6
+# Необязательное приложение VAE: torch>=1.12
