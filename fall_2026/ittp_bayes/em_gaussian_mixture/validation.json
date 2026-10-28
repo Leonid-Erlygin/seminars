@@ -1,38 +1,62 @@
 {
   "title": "EM алгоритм. Модель гауссовской смеси.",
-  "date": "2026-10-27",
+  "date": "2026-10-28",
+  "observation_space": "closed probability simplex with exact zero coordinates",
+  "generative_model": "mixture of nonempty Bernoulli supports and Dirichlet distributions on their active faces",
+  "reference_measure": "sum of coordinate Lebesgue measures on relative face interiors, including vertex atoms",
+  "dataset": {
+    "objects": 720,
+    "bins": 64,
+    "train": 480,
+    "test": 240,
+    "zero_fraction": 0.30082465277777776,
+    "generator_seed": 2026,
+    "split_seed": 42
+  },
   "notebooks": {
     "student": {
       "schema_valid": true,
       "clean_kernel_execution_passed": true,
-      "code_cells": 23,
-      "total_cells": 48,
-      "outputs_preserved": false,
-      "figures": 0
+      "code_cells": 25,
+      "total_cells": 51,
+      "outputs_preserved": true,
+      "figures": 2,
+      "preserved_output_scope": "supplied B=3 toy triangle/histogram and B=64 input illustrations only; no exercise results"
     },
     "solutions": {
       "schema_valid": true,
       "clean_kernel_execution_passed": true,
-      "code_cells": 23,
-      "total_cells": 49,
+      "code_cells": 25,
+      "total_cells": 52,
       "outputs_preserved": true,
-      "figures": 13,
-      "recorded_audit_tables": [
-        "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| Среднее + дисперсия | -0.0026 | 0.0115 |\n| Предложенный GMM | 0.9889 | 0.9846 |\n| EM: мультиномиальная смесь | 0.9403 | 0.9235 |\n| Четыре момента | 0.9903 | 0.9850 |",
-        "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| W1: медоиды | 0.7696 | 0.7669 |",
-        "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| VAE(3) → GMM | 0.9467 | 0.9377 |"
-      ]
+      "figures": 16
     }
   },
-  "runtime_checks": [
-    "E-step analytic probabilities, normalization and extreme tails",
-    "weighted M-step and exact variance floor",
-    "EM ascent and returned final likelihood",
-    "multinomial MAP alpha-1, normalization, count precision and ascent",
-    "inductive assignment does not depend on other test objects",
-    "discrete W1 analytic cases and agreement with scipy",
-    "VAE training and decoder normalization"
+  "recorded_audit_tables": [
+    "| Seed A | Seed B | ARI между разбиениями |\n| --- | --- | --- |\n| 11 | 22 | 0.6159 |\n| 11 | 33 | 1.0000 |\n| 22 | 33 | 0.6159 |",
+    "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| Прямые массы → PCA → GMM | 0.7320 | 0.7691 |\n| Корни масс → PCA → GMM | 0.6084 | 0.7733 |\n| Генеративная смесь DCD | 0.9175 | 0.9172 |\n| DCD: только носитель | 0.0122 | 0.0612 |",
+    "| Метод | Test ARI после преобразования | Test NMI |\n| --- | --- | --- |\n| Прямые массы → PCA → GMM | 0.2914 | 0.4278 |\n| Корни масс → PCA → GMM | 0.6688 | 0.7269 |\n| Генеративная смесь DCD | 0.8956 | 0.9017 |",
+    "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| W1: медоиды | 0.6257 | 0.7343 |",
+    "| Метод | Test ARI | Test NMI |\n| --- | --- | --- |\n| Совместная DCD-VAE | 0.5885 | 0.7076 |"
   ],
+  "runtime_checks": [
+    "Gaussian E/M analytic cases, constrained variance and EM ascent",
+    "enumerated normalization of nonempty supports",
+    "unit conditional density at simplex vertices",
+    "Beta-face integration and analytic mixture responsibilities",
+    "GEM ascent and returned final likelihood",
+    "inductive heuristic assignments at simplex vertices",
+    "generated distributions normalized with exact zeros",
+    "power transformation preserves supports",
+    "W1 agreement with analytical cases and scipy",
+    "joint VAE finite likelihood and ELBO at vertices",
+    "NumPy and PyTorch mixed-face likelihood agreement",
+    "MC variational cluster probabilities normalized"
+  ],
+  "independent_gradient_review": {
+    "mask_finite_difference_error": 3.68e-08,
+    "logalpha_finite_difference_error": 2.37e-08
+  },
   "execution_environment": {
     "python": "3.9.7",
     "numpy": "1.19.5",
@@ -40,13 +64,22 @@
     "scikit-learn": "0.24.2",
     "torch": "2.4.1+cu121",
     "device": "CPU",
+    "vae_dtype": "float64",
     "blas_threads": 1,
-    "vae_torch_threads": 2
+    "vae_threads": 1
+  },
+  "vae": {
+    "latent_dim": 4,
+    "warmup_epochs": 100,
+    "joint_epochs": 350,
+    "cluster_prior_jointly_optimized": true,
+    "train_mc_samples": 2,
+    "prediction_mc_samples": 100,
+    "test_used_for_training_or_epoch_selection": false
   },
   "pdf": {
     "compiled_from_latex": true,
-    "engine": "pdfLaTeX (TinyTeX)",
-    "pages": 13,
+    "pages": 21,
     "compile_errors": 0,
     "compile_warnings": 0,
     "overfull_boxes": 0,
@@ -54,9 +87,83 @@
     "visual_review_passed": true
   },
   "sha256": {
-    "em_gaussian_mixture_student.ipynb": "a23306aa14d2b4f2de8b32327bd9d871dd0448caff336665c14cebfdbbd2d9b5",
-    "em_teachers_guide.pdf": "4561e5e051ec442afdc08d931e08597bab13be453b56bbff4296d705b5c3b310",
-    "em_gaussian_mixture_solutions.ipynb": "d6ca899d124595c86357dc665f85103f1445cc287efa523ca002bf42e27ab35f",
-    "em_teachers_guide.tex": "53265e8ba390998f12661387cc5018f9c61387a3e8c53ea9641680152ddbd399"
+    "em_gaussian_mixture_student.ipynb": "5e2909cf3e94dbbbe4ad3c6e3f8516b8c7db909e9f36962b99600c56751d400e",
+    "em_teachers_guide.pdf": "41b3699865bf171e9bd08f37d884d332c41db7bc7a97fc1b78e753da05193a01",
+    "em_gaussian_mixture_solutions.ipynb": "93c05f5512a889be79d275a18e85d4cc4b6dd7d983fd99b099d0ebb3ec9c699d",
+    "em_teachers_guide.tex": "7b7898702910ae79302d13a93a4bc3b925cd85d1678bb5f3f6cd86da5d187e34"
+  },
+  "teacher_chapter_review": {
+    "chapter": "Генеративная модель: случайный носитель и масса на грани",
+    "pages": [
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "worked_example": {
+      "rho": [
+        0.8,
+        0.4,
+        0.6
+      ],
+      "alpha": [
+        2,
+        3,
+        4
+      ],
+      "observed_p": [
+        0.25,
+        0,
+        0.75
+      ],
+      "mask_probability": "36/119",
+      "face_density": "135/64",
+      "component_density": "1215/1904",
+      "two_component_posterior": "54/55"
+    },
+    "independent_mathematical_review_passed": true,
+    "topics": [
+      "step-by-step generation",
+      "conditional support probabilities",
+      "alpha ratios and concentration",
+      "Gamma-to-Dirichlet change of variables",
+      "face probability versus within-face density",
+      "mixed measure normalization",
+      "observed and hidden variables in EM"
+    ],
+    "figure_sha256": {
+      "dcd_generation_example.pdf": "2920d8ef3875976aef6f16ed924f1fc13262bf5806482caeb257f54b622d0bf2",
+      "dcd_generation_example.png": "7207937420ab26f20e2554261152578a6ea906522122ce7744309860c6dcc840"
+    }
+  },
+  "notebook_revision_review": {
+    "no_bold_or_metadata_preamble": true,
+    "no_timing_in_task_headers": true,
+    "covariance_counterexample_removed": true,
+    "task3_all_model_and_code_variables_defined": true,
+    "task3_histogram_examples_visible_in_both_editions": true,
+    "task4_training_likelihood_vs_m_step_plotted": true,
+    "independent_mathematical_review_passed": true,
+    "new_figures_visually_reviewed": true,
+    "task3_toy_b3_triangle_and_sample_histograms": true,
+    "task3_original_fitted_triangle_and_gem_history_restored": true,
+    "task4_main_b64_case": true,
+    "current_math_description_preserved": true
+  },
+  "toy_dataset": {
+    "task": 3,
+    "objects": 260,
+    "bins": 3,
+    "clusters": 2,
+    "generator_seed": 19,
+    "sample_histograms": [
+      "vertex",
+      "edge",
+      "interior"
+    ],
+    "same_objects_in_triangle_and_histograms": true
   }
 }

@@ -1,5 +1,5 @@
 from pathlib import Path
-import json, textwrap, uuid
+import json, textwrap
 
 ROOT = Path(__file__).resolve().parent
 ROOT.mkdir(parents=True, exist_ok=True)
@@ -13,45 +13,14 @@ def code(text, stub=None):
     cells.append(('code', textwrap.dedent(text).strip()+'\n',
                   None if stub is None else textwrap.dedent(stub).strip()+'\n', False))
 
-md(r'''
-# EM алгоритм. Модель гауссовской смеси.
-
-**ИППИ РАН · Байесовские методы машинного обучения · осень 2026**
-
-Как разбить объекты на группы, если принадлежность к группе неизвестна?
-Сначала введём скрытый номер компоненты и выведем EM для гауссовской смеси.
-Затем реализуем его, проверим на простых данных и перейдём к основной задаче:
-**каждый объект — целое распределение, представленное гистограммой с $B$ бинами**.
-Нужно предложить признаки, геометрию или вероятностную модель, позволяющие
-сгруппировать распределения по форме.
-
-Потребуются формула Байеса, математическое ожидание, нормальное распределение,
-производные и операции с массивами NumPy. ELBO из прошлого семинара пригодится
-для понимания EM; нейросети нужны только в необязательном приложении.
-
-**Маршрут на 120 минут:** модель и ELBO — 20; задания 1–2 и игрушечные
-примеры — 35; задание 3 — 15; основная задача и обсуждение — 50.
-Приложения про транспорт, выбор $K$ и VAE можно оставить на самостоятельную работу.
-''')
 md('''
-## Подготовка
-
-Python 3.9+; основные зависимости: `numpy scipy matplotlib scikit-learn ipython`.
-Для приложения VAE нужен `torch`. Все данные генерируются локально;
-скачивание датасетов и GPU не требуются. Запускайте ячейки по порядку.
-
-В заданиях реализуйте функции с указанными формами массивов. Проверки пропускают
-только `NotImplementedError`: после заполнения функции повторно выполните её
-ячейку, проверку и зависимые эксперименты. Остальные ошибки не скрываются.
-Истинные метки синтетических данных используются только в заключительном аудите.
+# EM алгоритм. Модель гауссовской смеси.
 ''')
 code('''
-import sys
 import numpy as np
-import scipy
-import sklearn
 import matplotlib.pyplot as plt
-from scipy.special import logsumexp, gammaln
+from scipy.special import logsumexp, gammaln, digamma, expit
+from scipy.optimize import minimize
 from scipy.stats import norm
 from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
@@ -98,8 +67,6 @@ def plot_histogram(ax, values, edges, fill=False, **kwargs):
         return ax.fill_between(edges, heights, step='post', **kwargs)
     return ax.step(edges, heights, where='post', **kwargs)
 
-print('Python', sys.version.split()[0], '| NumPy', np.__version__,
-      '| SciPy', scipy.__version__, '| scikit-learn', sklearn.__version__)
 ''')
 md(r'''
 ## 1. Скрытая компонента и наблюдаемое правдоподобие
@@ -112,22 +79,18 @@ $$p_\theta(x_i)=\sum_k\pi_k\mathcal N(x_i;\mu_k,\Sigma_k),\qquad
 \ell(\theta)=\sum_i\log\sum_k\pi_k\mathcal N(x_i;\mu_k,\Sigma_k).$$
 Логарифм суммы мешает раздельно оценить компоненты. Если бы $z_i$ были известны,
 каждую гауссиану можно было бы обучить на своей группе. EM заменяет неизвестные
-индикаторы принадлежности **мягкими весами**, а не единственной догадкой о метке.
+индикаторы принадлежности мягкими весами, а не единственной догадкой о метке.
 
-**Обсудите:** что означает $\pi_k$? Почему $K$ компонент не обязательно дают
+Вопрос: что означает $\pi_k$? Почему $K$ компонент не обязательно дают
 $K$ мод плотности? Изменится ли $p_\theta(x)$ при перестановке номеров компонент?
 ''')
 code('''
-def make_toy(seed=SEED, n=750, rotated=False):
+def make_toy(seed=SEED, n=750):
     rng = np.random.default_rng(seed)
     weights = np.array([.35, .4, .25])
     means = np.array([[-2., -1.], [1.2, 1.5], [3.2, -1.5]])
     covs = np.array([[[.5, 0], [0, .18]], [[.7, 0], [0, .35]],
                      [[.24, 0], [0, .65]]])
-    if rotated:
-        means = np.array([[-1.8, 0], [1.8, 0], [0, 2.8]])
-        covs = np.array([[[1.2, 1.03], [1.03, 1.2]],
-                         [[1.2, -1.03], [-1.03, 1.2]], [[.4, 0], [0, .4]]])
     labels = rng.choice(3, n, p=weights)
     X = np.vstack([rng.multivariate_normal(means[k], covs[k]) for k in labels])
     return X, labels
@@ -148,26 +111,26 @@ $$\ell(\theta)=\mathcal F(q,\theta)+
 \sum_i D_{\rm KL}(q_i\|p_\theta(z_i\mid x_i)).$$
 Здесь $0\log0=0$; KL неотрицательна. Поэтому $\mathcal F$ — нижняя граница.
 
-**E-шаг:** при фиксированном $\theta^{(t)}$ выбрать
+E-шаг: при фиксированном $\theta^{(t)}$ выбрать
 $q_i(k)=r_{ik}=p_{\theta^{(t)}}(z_i=k\mid x_i)$; зазор становится нулевым.
-**M-шаг:** при фиксированных $r$ максимизировать
+M-шаг: при фиксированных $r$ максимизировать
 $Q(\theta)=\sum_{i,k}r_{ik}\log p_\theta(x_i,z_i=k)$.
 Энтропия $q$ от новых параметров не зависит.
 
 В результате точных шагов $\ell(\theta^{(t+1)})\geq\ell(\theta^{(t)})$.
 Это не гарантия глобального максимума. Совпадение границы с правдоподобием
-происходит **после E-шага для текущих параметров**, а не для любых $q,\theta$.
+происходит после E-шага для текущих параметров, а не для любых $q,\theta$.
 
 В VAE вместо точного постериора используется ограниченное семейство
 $q_\phi(z\mid x)$ и градиентная оптимизация. Для конечной смеси сумма по $k$
 вычисляется точно; сэмплировать дискретную метку для E-шага не требуется.
 
-**На доске:** выведите тождество, раскрыв KL. Докажите цепочку
+На доске: выведите тождество, раскрыв KL. Докажите цепочку
 $\ell(\theta^{(t+1)})\geq\mathcal F(q^{(t)},\theta^{(t+1)})
 \geq\mathcal F(q^{(t)},\theta^{(t)})=\ell(\theta^{(t)})$.
 ''')
 md(r'''
-## Задание 1. Логарифмы плотностей и E-шаг · 15 минут
+## Задание 1. Логарифмы плотностей и E-шаг
 
 В реализации используем диагональные ковариации
 $\Sigma_k=\operatorname{diag}(v_{k1},\ldots,v_{kd})$:
@@ -236,16 +199,16 @@ $$\Sigma_k^{\rm new}=\frac1{N_k}\sum_i r_{ik}
 
 Без ограничений правдоподобие GMM может не иметь конечного максимума:
 одна компонента стягивается в отдельную точку. В нашем коде фиксируем
-$v_{kj}\geq v_{\min}>0$. Тогда **точный ограниченный M-шаг** имеет вид
+$v_{kj}\geq v_{\min}>0$. Тогда точный ограниченный M-шаг имеет вид
 $$v_{kj}^{\rm new}=\max\left\{v_{\min},
   N_k^{-1}\sum_i r_{ik}(x_{ij}-\mu_{kj}^{\rm new})^2\right\}.$$
 Добавление `eps` к каждой дисперсии — другая операция и само по себе не
 обеспечивает тот же точный ограниченный M-шаг.
 ''')
 md(r'''
-## Задание 2. M-шаг и цикл EM · 20 минут
+## Задание 2. M-шаг и цикл EM
 
-1. Реализуйте `m_step_diag`; центруйте по **новому** среднему.
+1. Реализуйте `m_step_diag`; центруйте по новому среднему.
 2. Реализуйте `fit_diag_gmm`. Для каждого запуска: инициализация → E-шаг →
    M-шаг → E-шаг → запись нового правдоподобия. История должна включать
    значение для начальных параметров и финальной модели.
@@ -367,7 +330,7 @@ if ready('E-шаг', 'EM'):
         ['sklearn, diag', library.score(X_toy)]])
 ''')
 md(r'''
-**Вопросы к эксперименту.** Где назначения наиболее неопределённы? Является ли
+Вопросы к эксперименту. Где назначения наиболее неопределённы? Является ли
 энтропия $r_i$ неопределённостью параметров? Почему наша модель и `sklearn`
 могут дать близкие, но разные результаты? Сравнивайте плотности и назначения
 с учётом перестановки компонент, а не по номеру кластера.
@@ -377,585 +340,747 @@ $\sigma\to0$ делает назначения ближайшему средне
 тогда совпадает с обновлением K-means. Обычный K-means не оценивает
 произвольные ковариации GMM.
 
-### Когда диагональных ковариаций недостаточно
-
-Следующий пример заранее фиксирован. Обучим диагональную и полную GMM на
-одних наблюдениях; сравним плотность на независимых объектах в **одном
-и том же исходном пространстве**. `reg_covar` в sklearn добавляет регуляризацию
-к диагонали: это не наш оператор `max`.
-''')
-code('''
-X_rot, _ = make_toy(seed=SEED+1, n=1400, rotated=True)
-rot_train, rot_test = X_rot[:900], X_rot[900:]
-fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
-rot_rows = []
-for ax, kind in zip(axes, ['diag', 'full']):
-    gm = GaussianMixture(3, covariance_type=kind, n_init=6,
-                         reg_covar=1e-4, random_state=42).fit(rot_train)
-    ax.scatter(*rot_test.T, c=gm.predict(rot_test), cmap='tab10', s=10)
-    ax.set_title('Ковариации: ' + kind)
-    rot_rows.append([kind, gm.score(rot_test), gm.converged_])
-plt.tight_layout(); plt.show()
-table(['Ковариации', 'Средний test log p(x)', 'Сходимость'], rot_rows)
 ''')
 md(r'''
-## Задание 3. EM для целых гистограмм · 15 минут
+## Задание 3. Генеративная модель распределений с нулями
 
-Для разминки заменим гауссовское условное распределение на мультиномиальное.
-Каждый объект $c_i=(c_{i1},\ldots,c_{iB})$ — целочисленные счётчики,
-$n_i=\sum_b c_{ib}>0$. У **всего объекта** один номер компоненты $z_i$:
-$$z_i\sim\operatorname{Cat}(\pi),\qquad
-c_i\mid z_i=k,n_i\sim\operatorname{Multinomial}(n_i,\theta_k),
-\quad \sum_b\theta_{kb}=1.$$
-Здесь $\theta_{kb}$ — вероятность бина $b$ для шаблона $k$.
-Это не кластеризация отдельных бинов и не GMM для скалярных значений внутри
-одной гистограммы. В модели $n_i$ считается заданным.
+### Наблюдаемые объекты
 
-Мультиномиальный коэффициент $n_i!/\prod_b c_{ib}!$ не зависит от $k$:
-$$a_{ik}=\log\pi_k+\sum_b c_{ib}\log\theta_{kb},\quad
-r_{ik}=\exp(a_{ik}-\operatorname{logsumexp}_l a_{il}).$$
-Для ML M-шаг равен
-$$\pi_k=N_k/N,\qquad
-\theta_{kb}=\frac{\sum_i r_{ik}c_{ib}}{\sum_i r_{ik}n_i}.$$
+Даны $N$ распределений на одном наборе из $B$ бинов или категорий.
+Индекс $i=1,\ldots,N$ нумерует объекты, а $b=1,\ldots,B$ — бины.
+Объект $i$ — известный вектор вероятностей
+$$p_i=(p_{i1},\ldots,p_{iB})\in\Delta^{B-1},\qquad
+\Delta^{B-1}=\left\{p\in\mathbb R^B:p_b\geq0,\ \sum_{b=1}^B p_b=1\right\}.$$
+Все строки матрицы $P\in\mathbb R^{N\times B}$ нормированы; координаты могут
+быть в точности равны нулю. Мы группируем целые распределения $p_i$.
 
-Чтобы исключить нулевые шаблонные вероятности, возьмём независимые симметричные
-априорные распределения $\theta_k\sim\operatorname{Dirichlet}(\alpha,\ldots,\alpha)$,
-$\alpha=1.05$. **MAP M-шаг** добавляет $\alpha-1$ к каждому взвешенному счётчику:
-$$\theta_{kb}=\frac{\sum_i r_{ik}c_{ib}+\alpha-1}
- {\sum_i r_{ik}n_i+B(\alpha-1)}.$$
-При $\alpha=1$ получаем ML; используйте $\alpha>1$ в коде.
-Монотонно растёт логарифм апостериорной плотности, а не обязательно чистое
-правдоподобие. Добавка $\alpha$, в отличие от $\alpha-1$, соответствовала бы
-другой оценке. Реализуйте E- и M-шаги; цикл EM предоставлен.
+Для каждого объекта определим маску и носитель:
+$$m_{ib}=\mathbf1\{p_{ib}>0\},\qquad
+m_i=(m_{i1},\ldots,m_{iB}),\qquad S_i=\{b:m_{ib}=1\}.$$
+Здесь $\mathbf1\{\cdot\}$ — индикатор условия, а $|S_i|$ — число активных бинов.
+Маска $m_i$ и множество $S_i$ полностью известны из $p_i$.
+
+На рисунках ниже бины — общие интервалы $[t_{b-1},t_b)$ ширины
+$\Delta_b=t_b-t_{b-1}$. Высота столбца $h_{ib}=p_{ib}/\Delta_b$
+изображает плотность: площадь столбца равна вероятности $p_{ib}$.
+В код методов передаются именно вероятности $P$, а не высоты $h$.
+Для категориальных данных координата $p_{ib}$ сразу задаёт вероятность категории.
+
+### Как модель генерирует одно распределение
+
+Зададим $K$ компонент. Их параметры:
+
+- $\pi=(\pi_1,\ldots,\pi_K)$ — вероятности компонент,
+  $\pi_k>0$, $\sum_{k=1}^K\pi_k=1$;
+- $\rho_{kb}\in(0,1)$ — вероятность включить бин $b$ при пробном выборе
+  маски в компоненте $k$;
+- $\alpha_{kb}>0$ — параметр формы для положительной массы бина $b$
+  в компоненте $k$.
+
+Для объекта $i$ выполняются следующие шаги.
+
+1. Выбрать скрытый кластер $c_i\sim\operatorname{Cat}(\pi)$, то есть
+   $\Pr(c_i=k)=\pi_k$.
+2. При $c_i=k$ независимо выбрать $m_{ib}\sim\operatorname{Bernoulli}(\rho_{kb})$
+   для всех $b$. Если все индикаторы нулевые, повторить выбор всей маски.
+   Сохранённая маска имеет закон независимых Bernoulli-индикаторов,
+   условный на $S_i\ne\varnothing$. После этого условия индикаторы уже зависимы.
+3. Для $b\in S_i$ независимо выбрать $g_{ib}\sim\operatorname{Gamma}(\alpha_{kb},1)$.
+   Первое число — параметр формы, второе — интенсивность (rate).
+   Это положительные ненормированные массы. Нормировать их:
+   $$p_{ib}=\begin{cases}
+   \displaystyle\frac{g_{ib}}{\sum_{j\in S_i}g_{ij}},& b\in S_i,\\[6pt]
+   0,& b\notin S_i.
+   \end{cases}$$
+
+Таким образом, $\rho_k$ управляет расположением точных нулей,
+а $\alpha_k$ — распределением положительной массы. Условно на маске
+$$p_{i,S_i}\mid S_i,c_i=k\sim\operatorname{Dirichlet}(\alpha_{k,S_i}).$$
+Обозначения $p_{i,S_i}$ и $\alpha_{k,S_i}$ означают подвекторы с индексами
+из $S_i$. Их размер равен $|S_i|$. Если $|S_i|=1$, единственная активная
+вероятность равна единице. Случайные величины $g_{ib}$ служат для генерации;
+при вычислении likelihood они уже проинтегрированы.
+
+Этот закон называют распределением Дирихле со случайным носителем
+(Dirichlet composition distribution, DCD).
+
+### Пример с тремя бинами
+
+Ниже $B=3$, $K=2$. Каждая точка треугольника соответствует целому
+распределению $(p_1,p_2,p_3)$: его вероятности служат весами трёх вершин.
+Вершины отвечают распределениям с одним активным бином, рёбра — с двумя,
+внутренность — с тремя. Буквы A, B, C связывают выбранные точки с их
+гистограммами справа. Бины имеют единичную ширину, поэтому высота столбца
+равна вероятности $p_b$. Цвета выделяют примеры, а не истинные кластеры.
 ''')
 code('''
-def multinomial_e_step(C, weights, templates):
-    """C (N,B), weights (K,), templates (K,B), all templates > 0.
-    Return R (N,K), LL without multinomial coefficients (scalar).
-    """
-    scores = np.log(weights)[None, :] + C @ np.log(templates).T
-    lse = logsumexp(scores, axis=1)
-    return np.exp(scores-lse[:, None]), lse.sum()
+def validate_histograms(P):
+    P = np.asarray(P, dtype=float)
+    if P.ndim != 2 or P.shape[1] < 2 or not np.isfinite(P).all():
+        raise ValueError('Нужен конечный массив формы (N,B), B >= 2.')
+    if np.any(P < 0) or not np.allclose(P.sum(1), 1., atol=1e-10, rtol=1e-10):
+        raise ValueError('Вероятности неотрицательны и суммируются в единицу.')
+    return P
 
-def multinomial_m_step(C, R, alpha=1.05):
-    """MAP update; alpha > 1. Return weights (K,), templates (K,B)."""
+def active_data(P):
+    P = validate_histograms(P)
+    mask = P > 0
+    logp = np.zeros_like(P)
+    np.log(P, out=logp, where=mask)
+    return mask.astype(float), logp
+
+def sample_face_component(rho, alpha, n, rng):
+    P = np.zeros((n, len(rho)))
+    for i in range(n):
+        active = rng.random(len(rho)) < rho
+        while not active.any():
+            active = rng.random(len(rho)) < rho
+        g = rng.gamma(alpha[active])
+        P[i, active] = g/g.sum()
+    return P
+
+def sample_face_mixture(model, n, rng):
+    labels = rng.choice(len(model['weights']), size=n, p=model['weights'])
+    P = np.zeros((n, model['rho'].shape[1]))
+    for k in range(len(model['weights'])):
+        members = np.flatnonzero(labels == k)
+        P[members] = sample_face_component(model['rho'][k], model['alpha'][k], len(members), rng)
+    return P, labels
+
+# Два семейства распределений по трём бинам.
+toy_face_rng = np.random.default_rng(19)
+toy_face_parameters = dict(weights=np.array([.5, .5]),
+    rho=np.array([[.8, .35, .6], [.35, .8, .6]]),
+    alpha=np.array([[6., 1., 2.], [1., 6., 2.]]))
+toy_P, _ = sample_face_mixture(toy_face_parameters, 260, toy_face_rng)
+validate_histograms(toy_P)
+
+# Одна гистограмма на вершине, одна на ребре и одна внутри треугольника.
+example_masks = np.array([[1, 0, 0], [0, 1, 1], [1, 1, 1]], dtype=bool)
+example_ids = []
+for mask in example_masks:
+    candidates = np.flatnonzero(np.all((toy_P > 0) == mask, axis=1))
+    # Выбираем пример с хорошо видимыми положительными массами.
+    example_ids.append(candidates[np.argmax(toy_P[candidates][:, mask].min(axis=1))])
+triangle = np.array([[0., 0.], [1., 0.], [.5, np.sqrt(3)/2]])
+xy = toy_P@triangle
+
+fig = plt.figure(figsize=(11, 6))
+grid = fig.add_gridspec(3, 2, width_ratios=[1.25, 1.])
+ax = fig.add_subplot(grid[:, 0])
+ax.plot(*triangle[[0, 1, 2, 0]].T, color='grey')
+ax.scatter(*xy.T, s=13, alpha=.45, color='grey')
+ax.text(-.02, -.07, '$p_1=1$', ha='center')
+ax.text(1.02, -.07, '$p_2=1$', ha='center')
+ax.text(.5, np.sqrt(3)/2+.06, '$p_3=1$', ha='center')
+ax.set(aspect='equal', xlim=(-.13, 1.13), ylim=(-.12, 1.02),
+       title='Каждая точка — целое распределение')
+ax.axis('off')
+for row, (letter, i, color) in enumerate(zip('ABC', example_ids,
+                                            ['tab:green', 'tab:orange', 'tab:purple'])):
+    ax.scatter(*xy[i], s=100, facecolors='none', edgecolors=color, linewidths=2)
+    ax.annotate(letter, xy[i], xytext=(8, 8), textcoords='offset points', color=color)
+    hist_ax = fig.add_subplot(grid[row, 1])
+    hist_ax.bar([1, 2, 3], toy_P[i], width=1., color=color, alpha=.65)
+    hist_ax.set(xticks=[1, 2, 3], ylim=(0, 1.05), ylabel='$p_b$',
+                title=f'{letter}: объект {i}, |S|={(toy_P[i]>0).sum()}')
+    if row == 2:
+        hist_ax.set_xlabel('Номер бина b')
+plt.tight_layout(); plt.show()
+
+''')
+md(r'''
+### Вероятность носителя и плотность на его грани
+
+Вероятность принять пробную маску в компоненте $k$ равна
+$$Z_k=1-\prod_{b=1}^B(1-\rho_{kb}).$$
+Поэтому вероятность наблюдаемой непустой маски $m_i$ есть
+$$q_k(m_i)=\Pr(m_i\mid c_i=k)
+=\frac{\prod_{b=1}^B\rho_{kb}^{m_{ib}}(1-\rho_{kb})^{1-m_{ib}}}{Z_k}.$$
+Условие непустоты объясняет нормировочный множитель $Z_k$.
+Параметр $\rho_{kb}$ относится к пробной маске;
+в принятой маске $\Pr(m_{ib}=1\mid c_i=k)=\rho_{kb}/Z_k$.
+
+При фиксированном $S_i$ вектор $p_i$ лежит во внутренности грани симплекса:
+его координаты положительны на $S_i$, равны нулю вне $S_i$ и суммируются в единицу.
+Размерность такой грани равна $|S_i|-1$. Введём
+$$A_{ik}=\sum_{b\in S_i}\alpha_{kb}.$$
+Условная плотность положительных координат равна
+$$d_{k,S_i}(p_{i,S_i})=
+\frac{\Gamma(A_{ik})}{\prod_{b\in S_i}\Gamma(\alpha_{kb})}
+\prod_{b\in S_i}p_{ib}^{\alpha_{kb}-1}.$$
+Здесь $\Gamma(a)=\int_0^\infty u^{a-1}e^{-u}\,du$ — гамма-функция.
+Параметры $\alpha_{kb}/A_{ik}$ задают условные средние активных вероятностей;
+увеличение всех $\alpha_{kb}$ на одном носителе в одинаковое число раз
+уменьшает разброс вокруг этих средних. На вершине ($|S_i|=1$)
+условный закон детерминирован и $d_{k,S_i}=1$.
+
+На каждой грани плотность $d_{k,S_i}$ задана в $|S_i|-1$ свободных
+координатах: последняя активная координата определяется нормировкой.
+Для вершин используем точечные массы. Сумма этих мер по всем непустым
+носителям задаёт одну фиксированную меру для всей смеси.
+Плотность компоненты относительно неё равна
+$$f_k(p_i)=q_k(m_i)\,d_{k,S_i}(p_{i,S_i}).$$
+Первый множитель — вероятность выбрать именно этот носитель,
+второй — условная плотность на выбранной грани. Все непустые носители,
+включая вершины, имеют положительную вероятность.
+
+При целых $\alpha_{kb}\geq1$ плотность на активной грани — нормированный
+многочлен по положительным координатам; при всех $\alpha_{kb}=1$
+она равномерна на этой грани. В обучении допускаются любые положительные $\alpha$.
+''')
+md(r'''
+### E-шаг и функции для реализации
+
+Вектор $p_i$ и его маска $m_i$ наблюдаются; скрыт только кластер $c_i$.
+Обозначим все параметры смеси через $\theta=(\pi,\rho,\alpha)$.
+Наблюдаемая плотность и логарифм правдоподобия равны
+$$f_\theta(p_i)=\sum_{k=1}^K\pi_k f_k(p_i),\qquad
+\ell(\theta;P)=\sum_{i=1}^N\log f_\theta(p_i).$$
+На E-шаге вычисляем ответственности — условные вероятности кластеров:
+$$r_{ik}=\Pr(c_i=k\mid p_i,\theta)
+=\frac{\pi_k f_k(p_i)}{\sum_{l=1}^K\pi_l f_l(p_i)}.$$
+Для устойчивого вычисления введём
+$$a_{ik}=\log\pi_k+\log q_k(m_i)+\log d_{k,S_i}(p_{i,S_i}),$$
+$$s_i=\operatorname{logsumexp}_{k=1}^K a_{ik}
+=\log\sum_{k=1}^K e^{a_{ik}},\qquad
+r_{ik}=e^{a_{ik}-s_i},\qquad \ell=\sum_{i=1}^N s_i.$$
+В частности,
+$$\log d_{k,S_i}
+=\log\Gamma(A_{ik})-\sum_{b\in S_i}\log\Gamma(\alpha_{kb})
++\sum_{b\in S_i}(\alpha_{kb}-1)\log p_{ib}.$$
+Все суммы с $\log p_{ib}$ идут только по активным координатам.
+
+Реализуйте три функции:
+
+1. `support_logpmf(M, rho)` возвращает матрицу $\log q_k(m_i)$ формы $(N,K)$.
+   Здесь `M` — бинарная матрица масок $(N,B)$, `rho` — массив $(K,B)$.
+   Вычислите `log_empty` $=\sum_b\log(1-\rho_{kb})$, а затем
+   $\log Z_k$ через `log(-expm1(log_empty))`.
+2. `face_dirichlet_logpdf(P, alpha)` возвращает матрицу
+   $\log d_{k,S_i}(p_{i,S_i})$ формы $(N,K)$.
+   Массивы `P` и `alpha` имеют формы $(N,B)$ и $(K,B)$.
+   Используйте `gammaln` для $\log\Gamma$.
+3. `face_e_step(P, weights, rho, alpha)` возвращает матрицу
+   $R=(r_{ik})$ формы $(N,K)$ и скаляр $\ell$.
+   Вектор `weights` формы $(K,)$ хранит $\pi$.
+
+Готовая функция `active_data` возвращает маски `M` и массив `L` формы $(N,B)$:
+$L_{ib}=\log p_{ib}$ при $b\in S_i$ и $L_{ib}=0$ вне носителя.
+Нули в `L` служат только для суммирования по активным координатам;
+функция не вычисляет $\log0$. Исходные нулевые вероятности не меняются.
+''')
+code('''
+def support_logpmf(M, rho):
+    """Nonempty masks M (N,B), probabilities rho (K,B) -> log pmf (N,K)."""
+    log_empty = np.log1p(-rho).sum(axis=1)
+    log_nonempty = np.log(-np.expm1(log_empty))
+    return M@np.log(rho).T + (1-M)@np.log1p(-rho).T - log_nonempty[None, :]
+
+def face_dirichlet_logpdf(P, alpha):
+    """P (N,B), alpha (K,B)>0 -> log density on each observed face (N,K)."""
+    M, L = active_data(P)
+    totals = M@alpha.T
+    return gammaln(totals)-M@gammaln(alpha).T+L@(alpha-1).T
+
+def face_e_step(P, weights, rho, alpha):
+    """Return responsibilities (N,K) and observed log likelihood (scalar)."""
+    M, _ = active_data(P)
+    scores = np.log(weights)[None, :]+support_logpmf(M, rho)+face_dirichlet_logpdf(P, alpha)
+    normalizer = logsumexp(scores, axis=1)
+    return np.exp(scores-normalizer[:, None]), normalizer.sum()
+''', '''
+def support_logpmf(M, rho):
+    """Nonempty masks M (N,B), probabilities rho (K,B) -> log pmf (N,K)."""
+    raise NotImplementedError
+
+def face_dirichlet_logpdf(P, alpha):
+    """P (N,B), alpha (K,B)>0 -> log density on each observed face (N,K)."""
+    raise NotImplementedError
+
+def face_e_step(P, weights, rho, alpha):
+    """Return responsibilities (N,K) and observed log likelihood (scalar)."""
+    raise NotImplementedError
+''')
+code('''
+def test_face_likelihood():
+    from itertools import product
+    from scipy.integrate import quad
+    for B in [2, 3, 6]:
+        masks = np.array([m for m in product([0., 1.], repeat=B) if sum(m)>0])
+        rho = np.linspace(.2, .8, B)[None, :]
+        np.testing.assert_allclose(np.exp(support_logpmf(masks, rho)).sum(), 1., atol=1e-12)
+    vertices = np.eye(3)
+    np.testing.assert_allclose(face_dirichlet_logpdf(vertices, np.array([[2., 3., 4.]])), 0., atol=1e-12)
+    rho = np.array([[.5, .5, .5]])
+    np.testing.assert_allclose(support_logpmf(vertices, rho), np.log(1/7))
+    integral = quad(lambda t: np.exp(face_dirichlet_logpdf(
+        np.array([[t, 1-t]]), np.array([[2., 3.]]))[0, 0]), 0., 1.)[0]
+    np.testing.assert_allclose(integral, 1., atol=1e-10)
+    R, ll = face_e_step(np.array([[1., 0], [.5, .5]]), np.array([.5, .5]),
+        np.array([[.8, .2], [.2, .8]]), np.ones((2, 2)))
+    np.testing.assert_allclose(R[0], [16/17, 1/17])
+    np.testing.assert_allclose(R[1], [.5, .5])
+    np.testing.assert_allclose(R.sum(1), 1.)
+    assert np.isfinite(ll)
+
+check('Likelihood на симплексе', test_face_likelihood)
+''')
+md(r'''
+### Численный M-шаг: generalized EM
+
+При фиксированных ответственностях $r_{ik}$ максимизируем
+$$Q(\theta)=\sum_{i=1}^N\sum_{k=1}^K r_{ik}
+\left[\log\pi_k+\log q_k(m_i)+\log d_{k,S_i}(p_{i,S_i})\right].$$
+Пусть $N_k=\sum_i r_{ik}$ — суммарный вес объектов в компоненте $k$.
+Тогда $\pi_k^{\rm new}=N_k/N$. Оставшаяся задача распадается на отдельную
+оптимизацию $\sum_i r_{ik}\log q_k(m_i)$ по $\rho_k$ и
+$\sum_i r_{ik}\log d_{k,S_i}(p_{i,S_i})$ по $\alpha_k$ для каждой компоненты.
+
+Ниже дан численный оптимизатор с аналитическими градиентами.
+Внутри компоненты он использует нормированные веса $w_i=r_{ik}/N_k$,
+взвешенную частоту активности `freq` $=\sum_i w_i m_i$ и
+`mean_logp` $=\sum_i w_i L_i$. Деление цели на $N_k$ не меняет её максимума.
+В переменных оптимизатора `eta` $=\log(\rho_k/(1-\rho_k))$,
+так что $\rho_k=\operatorname{sigmoid}(\mathrm{eta})$;
+`log_alpha` — покоординатный логарифм $\alpha_k$.
+
+Ограничим логиты $\rho$ интервалом $[-8,8]$, а $\alpha$ — интервалом
+$[0.05,500]$. Это фиксированное семейство параметров. После каждого численного
+обновления проверяем, что соответствующая часть $Q$ не уменьшилась; иначе
+сохраняем старое значение. Увеличения $Q$ достаточно для подъёма likelihood
+(generalized EM, GEM), даже если оптимизатор не нашёл точный максимум.
+Вывод градиентов приведён в конспекте преподавателя.
+
+Вопрос: почему частота активности не всегда равна $\rho_{kb}$?
+Почему вершины дают информацию о масках, но не о параметрах Дирихле
+на этой вершине?
+''')
+code('''
+def numerical_face_m_step(P, R, rho, alpha, learn_shapes=True):
+    M, L = active_data(P)
+    B = P.shape[1]
     nk = R.sum(0)
     if np.any(nk < 1e-10):
-        raise FloatingPointError('Пустая компонента.')
-    counts = R.T @ C + alpha-1
-    return nk/len(C), counts/counts.sum(1, keepdims=True)
-''', '''
-def multinomial_e_step(C, weights, templates):
-    """C (N,B), weights (K,), templates (K,B), all templates > 0.
-    Return R (N,K), LL without multinomial coefficients (scalar).
-    """
-    # TODO: log scores для всего объекта, logsumexp по компонентам.
-    raise NotImplementedError
+        raise FloatingPointError('Пустая компонента: нужен другой старт.')
+    new_rho, new_alpha = rho.copy(), alpha.copy()
+    for k in range(R.shape[1]):
+        w = R[:, k]/nk[k]
+        freq, mean_logp = w@M, w@L
+        def mask_objective(eta):
+            r = expit(eta)
+            log_empty = -np.logaddexp(0., eta).sum()
+            nonempty = -np.expm1(log_empty)
+            value = freq@eta-np.logaddexp(0., eta).sum()-np.log(nonempty)
+            gradient = freq-r/nonempty
+            return -value, -gradient
+        eta0 = np.log(rho[k])-np.log1p(-rho[k])
+        result = minimize(mask_objective, eta0, jac=True, method='L-BFGS-B',
+                          bounds=[(-8., 8.)]*B, options={'maxiter':80, 'ftol':1e-11})
+        if np.isfinite(result.fun) and result.fun <= mask_objective(eta0)[0]:
+            new_rho[k] = expit(result.x)
+        if learn_shapes:
+            def shape_objective(log_alpha):
+                a = np.exp(log_alpha)
+                totals = M@a
+                value = w@gammaln(totals)-freq@gammaln(a)+mean_logp@(a-1)
+                gradient = M.T@(w*digamma(totals))-freq*digamma(a)+mean_logp
+                return -value, -gradient*a
+            old = np.log(alpha[k])
+            result = minimize(shape_objective, old, jac=True, method='L-BFGS-B',
+                bounds=[(np.log(.05), np.log(500.))]*B,
+                options={'maxiter':100, 'ftol':1e-10, 'gtol':1e-5})
+            if np.isfinite(result.fun) and result.fun <= shape_objective(old)[0]:
+                new_alpha[k] = np.exp(result.x)
+    return nk/len(P), new_rho, new_alpha
 
-def multinomial_m_step(C, R, alpha=1.05):
-    """MAP update; alpha > 1. Return weights (K,), templates (K,B)."""
-    # TODO: взвешенные счётчики + alpha - 1, затем нормировка по бинам.
-    raise NotImplementedError
-''')
-code('''
-def fit_multinomial(C, K, seed=0, n_init=6, max_iter=180, tol=1e-7, alpha=1.05):
-    if alpha <= 1:
-        raise ValueError('В этой учебной реализации требуется alpha > 1.')
+def fit_face_mixture(P, K, seed=0, n_init=3, max_iter=80, tol=1e-6, learn_shapes=True):
+    P = validate_histograms(P)
+    M, _ = active_data(P)
     rng = np.random.default_rng(seed)
     best = None
-    for _ in range(n_init):
-        labels = KMeans(K, n_init=1, random_state=int(rng.integers(2**30))).fit_predict(
-            np.sqrt(C/C.sum(1, keepdims=True)))
-        R = .98*np.eye(K)[labels] + .02/K
-        history, converged = [], False
+    for restart in range(n_init):
+        labels = KMeans(K, n_init=1, random_state=int(rng.integers(2**30))).fit_predict(np.sqrt(P))
+        R = .98*np.eye(K)[labels]+.02/K
+        weights = R.mean(0)
+        rho = np.clip(R.T@M/R.sum(0)[:, None], .05, .95)
+        alpha = np.ones((K, P.shape[1]))
         try:
-            for step in range(max_iter):
-                w, theta = multinomial_m_step(C, R, alpha)
-                R, ll = multinomial_e_step(C, w, theta)
-                objective = ll + (alpha-1)*np.log(theta).sum()
-                history.append(objective)
-                if len(history) > 1:
-                    gain = history[-1]-history[-2]
-                    if gain < -1e-7*(1+abs(history[-2])):
-                        raise RuntimeError('MAP-цель уменьшилась.')
-                    if gain <= tol*(1+abs(history[-2])):
-                        converged = True
-                        break
-            model = dict(weights=w, templates=theta, history=np.array(history),
-                         converged=converged)
-            if best is None or objective > best['history'][-1]:
+            weights, rho, alpha = numerical_face_m_step(P, R, rho, alpha, learn_shapes)
+            R, ll = face_e_step(P, weights, rho, alpha)
+            history, converged = [ll], False
+            for iteration in range(max_iter):
+                weights, rho, alpha = numerical_face_m_step(P, R, rho, alpha, learn_shapes)
+                R, ll = face_e_step(P, weights, rho, alpha)
+                gain = ll-history[-1]
+                if gain < -1e-8*(1+abs(history[-1])):
+                    raise RuntimeError('Likelihood уменьшился: проверьте численный M-шаг.')
+                history.append(ll)
+                if gain <= tol*(1+abs(history[-2])):
+                    converged = True
+                    break
+            model = dict(weights=weights, rho=rho, alpha=alpha,
+                         history=np.array(history), converged=converged)
+            if best is None or ll > best['history'][-1]:
                 best = model
         except FloatingPointError:
             continue
     if best is None:
-        raise RuntimeError('Все запуски потеряли компоненту.')
+        raise RuntimeError('Все старты потеряли компоненту.')
     return best
 
-def predict_multinomial(model, C):
-    return multinomial_e_step(C, model['weights'], model['templates'])[0]
+def predict_face(model, P):
+    return face_e_step(P, model['weights'], model['rho'], model['alpha'])[0]
 
-def multinomial_logpmf(model, C):
-    coefficients = gammaln(C.sum(1)+1)-gammaln(C+1).sum(1)
-    scores = np.log(model['weights'])[None, :] + C@np.log(model['templates']).T
-    return coefficients + logsumexp(scores, axis=1)
 
-def test_multinomial():
-    C = np.array([[8, 2, 0], [2, 8, 0], [4, 1, 0], [1, 4, 0]])
-    R = np.array([[1., 0], [0, 1.], [1., 0], [0, 1.]])
-    w, theta = multinomial_m_step(C, R, alpha=2.)
-    np.testing.assert_allclose(w, [.5, .5])
-    np.testing.assert_allclose(theta[0], [13/18, 4/18, 1/18])
-    np.testing.assert_allclose(theta.sum(1), 1.)
-    R1, _ = multinomial_e_step(np.array([[9, 1, 0]]), w, theta)
-    R2, _ = multinomial_e_step(np.array([[90, 10, 0]]), w, theta)
-    assert R2[0, 0] > R1[0, 0] > .5
-    assert np.isfinite(theta).all() and (theta > 0).all()
-    model = fit_multinomial(C, 2, n_init=2)
-    assert np.all(np.diff(model['history']) >= -1e-6)
-    np.testing.assert_allclose(predict_multinomial(model, C).sum(1), 1.)
-
-check('Мультиномиальная смесь', test_multinomial)
 ''')
 code('''
-# Простой пример до основной задачи: три шаблона на пяти категориях.
-mini_rng = np.random.default_rng(31)
-mini_templates = np.array([[.7, .15, .05, .05, .05],
-                           [.05, .1, .7, .1, .05], [.05, .05, .05, .15, .7]])
-mini_ids = mini_rng.choice(3, 240)
-mini_C = np.array([mini_rng.multinomial(int(mini_rng.integers(20, 100)),
-                                       mini_templates[k]) for k in mini_ids])
-if ready('Мультиномиальная смесь'):
-    mini_model = fit_multinomial(mini_C, 3, seed=32)
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
-    for k, theta in enumerate(mini_model['templates']):
-        axes[0].plot(np.arange(1, 6), theta, marker='o', label=f'Шаблон {k+1}')
-    axes[0].set(xlabel='Категория', ylabel='Вероятность'); axes[0].legend()
-    axes[1].plot(mini_model['history'], marker='.')
-    axes[1].set(xlabel='Итерация', ylabel='log posterior + const')
+def test_face_em():
+    fitted = fit_face_mixture(toy_P, 2, seed=21, n_init=2)
+    assert np.all(np.diff(fitted['history']) >= -1e-6)
+    R = predict_face(fitted, toy_P)
+    np.testing.assert_allclose(R.sum(1), 1.)
+    assert np.isfinite(predict_face(fitted, np.eye(3))).all()
+    final = face_e_step(toy_P, fitted['weights'], fitted['rho'], fitted['alpha'])[1]
+    np.testing.assert_allclose(final, fitted['history'][-1])
+
+if ready('Likelihood на симплексе'):
+    check('EM на симплексе', test_face_em)
+''')
+md(r'''
+### Кластеризация точек на симплексе
+
+Обучите смесь на `toy_P` и раскрасьте точки по наиболее вероятной компоненте.
+Сравните объекты на рёбрах и во внутренности треугольника.
+
+Вопрос: почему точка на вершине может иметь неопределённую принадлежность
+к кластеру? Какие сведения о компоненте несёт её носитель?
+''')
+code('''
+if ready('EM на симплексе'):
+    toy_face_model = fit_face_mixture(toy_P, 2, seed=21, n_init=3)
+    toy_face_R = predict_face(toy_face_model, toy_P)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
+    axes[0].plot(*triangle[[0, 1, 2, 0]].T, color='grey')
+    axes[0].scatter(*xy.T, c=toy_face_R.argmax(1), s=12, cmap='tab10', alpha=.7)
+    axes[0].text(-.02, -.07, '$p_1=1$', ha='center')
+    axes[0].text(1.02, -.07, '$p_2=1$', ha='center')
+    axes[0].text(.5, np.sqrt(3)/2+.06, '$p_3=1$', ha='center')
+    axes[0].set(aspect='equal', xlim=(-.13, 1.13), ylim=(-.12, 1.02),
+                title='EM: кластеры на симплексе')
+    axes[0].axis('off')
+    axes[1].plot(toy_face_model['history'], marker='.')
+    axes[1].set(xlabel='M-шаг', ylabel='log likelihood', title='Подъём GEM')
     plt.tight_layout(); plt.show()
 ''')
 md(r'''
-**Проверьте смысл модели.** Две гистограммы с одинаковыми долями, но
-$n=10$ и $n=1000$ несут разное количество информации. Почему E-шаг учитывает
-это различие? Что изменится, если передать в него доли вместо счётчиков?
-Можно ли восстановить $n_i$, если сохранены только высоты нормированной плотности?
+## Задание 4. Кластеризация распределений: эвристики и генеративные модели
+
+Даны $N$ нормированных гистограмм $p_i\in\Delta^{B-1}$. Координата $p_{ib}$
+— вероятность бина или категории $b$ у распределения $i$. Допускаются точные
+нули, нерегулярные и многомодальные формы. Требуется сгруппировать целые
+распределения и назначать кластер новому объекту. Метка $c_i$ относится ко всей
+строке $p_i$ матрицы $P$; число мод одной гистограммы не определяет число кластеров.
+
+Если заданы высоты плотности $h_b$ на интервалах ширины $\Delta_b$,
+вероятности равны $p_b=h_b\Delta_b$. Для дискретных категорий вход уже имеет
+вид масс. Числовую опору можно использовать, когда она известна из условия.
+
+Сначала предложите план сравнения. Какие свойства должна сохранять
+кластеризация? Что предполагает генеративная модель о носителе и положительных
+вероятностях? Когда эти предположения могут оказаться неверными?
+
+1. Постройте эвристический подход: признаки → PCA → GMM из заданий 1–2.
+2. Обучите смесь DCD из задания 3 и объясните смысл её параметров.
+   Постройте график обучающего log likelihood по M-шагам и проверьте его рост.
+3. Сравните представителей, устойчивость и отложенные разбиения после
+   фиксации параметров. По изображениям проверьте, что модель умеет генерировать
+   разумные гистограммы с нулями.
+4. Выполните абляцию «только носитель» и контроль нарушения модельных предположений.
+
+Ни один метод не обязан выигрывать на всех возможных распределениях.
 ''')
 md(r'''
-## 4. Основная задача: кластеризация распределений · 50 минут
+### Базовые представления
 
-Объект $i$ — распределение скалярной величины $T$, представленное гистограммой.
-Для всех объектов известны общие границы $a_0<\cdots<a_B$;
-$\Delta_b=a_b-a_{b-1}$. Различайте:
+Для вероятностей геометрия Хеллингера задаётся
+$$H^2(p,q)=\tfrac12\sum_b(\sqrt{p_b}-\sqrt{q_b})^2.$$
+Поэтому $\sqrt p$ — удобные признаки, сохраняющие нули. После усечения PCA
+часть информации теряется. Прямые вероятности имеют вырожденную полную
+ковариацию в $\mathbb R^B$ из-за $\sum_b p_b=1$; можно работать в проекции.
+Для числовых бинов полезно сравнить также моменты.
 
-| Величина | Обозначение | Нормировка |
-|---|---|---|
-| Счётчик наблюдений в бине | $c_{ib}$ | $\sum_b c_{ib}=n_i$ |
-| Вероятностная масса бина | $p_{ib}=c_{ib}/n_i$ | $\sum_b p_{ib}=1$ |
-| Высота плотности | $h_{ib}=p_{ib}/\Delta_b$ | $\sum_b h_{ib}\Delta_b=1$ |
-
-Матрицы имеют форму $(N,B)$: **строка — объект для кластеризации**.
-Для неравных ширин сумма высот плотности не равна единице. Взятые в разных
-сетках гистограммы сначала нужно привести к общей сетке с сохранением масс.
-Ни перестановка бинов, ни стандартизация каждого бина по отдельности не
-сохраняют исходную геометрию распределений автоматически.
-
-### До кода: сформулируйте собственный подход
-
-В течение пяти минут обсудите в паре и запишите:
-
-1. Что такое «похожие распределения»: совпадают среднее и масштаб,
-   форма, моды или положение массы вдоль оси? Должен ли небольшой сдвиг
-   менять кластер? Нужно ли удалять сдвиг и масштаб?
-2. Какой объект подать в GMM? Какие свойства будут потеряны?
-3. Можно ли использовать счётчики и моделировать шум оценки гистограммы?
-4. Как сравнить качество без истинных меток и как показать смысл кластеров?
-
-**Предложите минимум два подхода до чтения подсказок ниже.** Один должен
-использовать GMM; второй может менять признаки, расстояние или модель объекта.
-Выбор признаков, $K$ и параметров зафиксируйте до заключительного аудита.
-''')
-md('''
-### Протокол эксперимента
-
-Даны 720 независимых объектов, $B=64$ и разные размеры выборок $n_i$ от 60
-до 600. Случайный сдвиг и масштаб создают внутрикластерную вариативность.
-В учебной постановке число семейств известно: **$K=4$**. Это дополнительное
-условие задачи, а не результат просмотра истинных меток.
-
-Сначала случайно разделим **объекты** на 480 обучающих и 240 отложенных.
-PCA, стандартизацию, GMM, шаблоны и медоиды оцениваем только на обучении.
-Для назначения новых объектов используем уже обученную модель. Не разделяем
-бины и отдельные отсчёты одного объекта между обучением и тестом.
-
-Метки семейства и истинные вероятности доступны только в функции
-`simulation_audit`; не вызывайте её до фиксации методов. В реальной задаче
-такой функции нет. Фиксированные seeds делают сравнение воспроизводимым,
-но не гарантируют побитового совпадения между версиями библиотек.
+Такие конвейеры могут хорошо кластеризовать, но выбранная GMM задаёт
+плотность в пространстве признаков. Модель DCD задаёт распределение
+непосредственно на наблюдаемых объектах и их носителях. Её предположения
+явны и проверяемы через генерацию и отложенное likelihood в одной модели.
 ''')
 code('''
 def generate_histograms(seed=SEED, n_objects=720, B=64):
     rng = np.random.default_rng(seed)
-    edges = np.linspace(-4, 4, B+1)
-    labels = np.arange(n_objects) % 4
+    centers = np.linspace(-3.5, 3.5, B)
+    step = centers[1]-centers[0]
+    edges = np.r_[centers-step/2, centers[-1]+step/2]
+    t = centers
+    templates = np.array([
+        np.exp(-.5*(t/.9)**4), np.exp(-((t*t-1)/.65)**2),
+        np.exp(-.5*((t+.4)/.85)**2)+.4*np.exp(-.5*((t-1.5)/.6)**2),
+        np.exp(-.5*((t-.4)/.85)**2)+.4*np.exp(-.5*((t+1.5)/.6)**2)])
+    templates /= templates.sum(1, keepdims=True)
+    alpha = .12+100*templates
+    rho = .62+.25*templates/templates.max(1, keepdims=True)
+    labels = np.arange(n_objects)%4
     rng.shuffle(labels)
-    sizes = np.rint(np.exp(rng.uniform(np.log(60), np.log(600), n_objects))).astype(int)
-    true_masses = []
-    for label in labels:
-        if label == 0:
-            w, loc, scale = [1.], np.array([0.]), np.array([1.])
-        elif label == 1:
-            s = np.sqrt(.85**2+.35**2)
-            w, loc, scale = [.5, .5], np.array([-.85, .85])/s, np.array([.35, .35])/s
-        else:
-            s = np.sqrt(.8*(.45**2+.45**2)+.2*(1.8**2+.6**2))
-            w, loc, scale = [.8, .2], np.array([-.45, 1.8])/s, np.array([.45, .6])/s
-            if label == 3:
-                loc = -loc
-        shift, stretch = rng.normal(0, .18), np.exp(rng.normal(0, .1))
-        cdf = norm.cdf((edges[:, None]-(shift+stretch*loc))/(stretch*scale)).dot(w)
-        mass = np.diff(cdf)
-        true_masses.append(mass/mass.sum())
-    true_masses = np.array(true_masses)
-    C = np.array([rng.multinomial(n, p) for n, p in zip(sizes, true_masses)])
-    return C, edges, labels, true_masses
+    P = np.zeros((n_objects, B))
+    for i, k in enumerate(labels):
+        P[i] = sample_face_component(rho[k], alpha[k], 1, rng)[0]
+    return P, edges, labels
 
 def make_seminar_data():
-    C, edges, hidden_y, hidden_p = generate_histograms()
-    # Это учебное сокрытие ответа, а не защита от намеренного чтения исходников.
+    P, edges, hidden_y = generate_histograms()
     def simulation_audit():
-        return hidden_y.copy(), hidden_p.copy()
-    return C, edges, simulation_audit
+        return hidden_y.copy()
+    return P, edges, simulation_audit
 
-C, edges, simulation_audit = make_seminar_data()
+P, edges, simulation_audit = make_seminar_data()
+validate_histograms(P)
 widths = np.diff(edges)
 centers = (edges[:-1]+edges[1:])/2
-n_obs = C.sum(1)
-P = C/n_obs[:, None]
-H = P/widths[None, :]
-K = 4
-ids = np.random.default_rng(42).permutation(len(C))
+K = 4  # Задано учебным условием до открытия меток.
+ids = np.random.default_rng(42).permutation(len(P))
 train_ids, test_ids = ids[:480], ids[480:]
-C_train, C_test = C[train_ids], C[test_ids]
 P_train, P_test = P[train_ids], P[test_ids]
-assert C.shape == (720, 64) and np.all(C >= 0)
-np.testing.assert_allclose(P.sum(1), 1.)
-np.testing.assert_allclose((H*widths).sum(1), 1.)
-# На неравномерной сетке складываются массы, а не высоты плотности.
-demo_widths = np.diff([0., 1., 3.])
-demo_density = np.array([.5, .25])
-np.testing.assert_allclose(demo_density*demo_widths, [.5, .5])
-print('Обучение:', C_train.shape, '| тест:', C_test.shape,
-      '| n_i:', n_obs.min(), '…', n_obs.max())
-
+print('Распределений:', len(P), '| бинов:', P.shape[1],
+      '| доля точных нулей:', np.mean(P == 0))
 fig, axes = plt.subplots(2, 4, figsize=(13, 5), sharex=True)
 for ax, i in zip(axes.flat, train_ids[:8]):
-    plot_histogram(ax, H[i], edges, fill=True, alpha=.55)
-    ax.set_title(f'Объект {i}, n={n_obs[i]}')
+    plot_histogram(ax, P[i]/widths, edges, fill=True, alpha=.55)
+    ax.set_title(f'Объект {i}, |S|={(P[i]>0).sum()}')
     ax.set(xlabel='t', ylabel='Плотность')
 plt.tight_layout(); plt.show()
 ''')
-md(r'''
-### Задание 4. Спроектируйте и исследуйте метод
+md('''
+### Реализуйте эвристический baseline и сравните с EM
 
-Реализуйте `fit_distribution_clustering` со следующим контрактом:
-функция обучается только на `P_fit`, затем возвращает словарь с метками
-`train_labels` и `test_labels`, а также **краткое описание** `description`.
-Истинные метки, `simulation_audit` и тестовые ответы функция не использует.
-Можно добавить поля с преобразованием и обученной моделью.
+Используйте набор из 720 распределений по $B=64$ бинам, показанный выше.
+Разделение — 480 обучающих и 240 отложенных объектов. Все преобразования,
+параметры и инициализации оцениваются только на обучении. Истинные метки
+будут открыты в `simulation_audit` после фиксации методов.
 
-Сначала реализуйте GMM по выбранным вами признакам. Затем предложите
-второй метод или другую осмысленную систему признаков. Сравните их с
-предоставленным базовым вариантом «среднее + дисперсия». Покажите
-представителей кластеров и устойчивость к трём инициализациям.
-
-**Критерий выполнения:** воспроизводимый эксперимент, обоснование геометрии,
-описание потерь информации, честная оценка и содержательная интерпретация.
-Высокий ARI сам по себе не заменяет эти пункты.
+Реализуйте `fit_distribution_clustering`. Возвращайте `train_labels`,
+`test_labels` и описание `description`. Используйте собственный Gaussian EM
+по выбранным признакам. Затем добавьте генеративную смесь DCD через
+`fit_face_mixture`. Данные сохраняются с исходными нулями во всех методах.
 ''')
 code('''
 def fit_distribution_clustering(P_fit, P_new, K, seed):
-    """Fit only on P_fit. Return labels and a textual method description."""
-    pca = PCA(n_components=8, svd_solver='full').fit(np.sqrt(P_fit))
-    Z_fit, Z_new = pca.transform(np.sqrt(P_fit)), pca.transform(np.sqrt(P_new))
-    model = GaussianMixture(K, covariance_type='full', n_init=6,
-                            reg_covar=1e-4, random_state=seed).fit(Z_fit)
-    return dict(train_labels=model.predict(Z_fit), test_labels=model.predict(Z_new),
-                description='sqrt(массы) → PCA(8) → GMM(full)',
-                pca=pca, model=model, train_embedding=Z_fit, test_embedding=Z_new)
+    pca = PCA(min(8, P_fit.shape[1]-1), svd_solver='full').fit(np.sqrt(P_fit))
+    A, B = pca.transform(np.sqrt(P_fit)), pca.transform(np.sqrt(P_new))
+    model = fit_diag_gmm(A, K, seed=seed, n_init=12, var_floor=1e-4)
+    return dict(train_labels=predict_diag(model, A).argmax(1),
+                test_labels=predict_diag(model, B).argmax(1),
+                description='sqrt(вероятности) → PCA(8) → диагональная GMM',
+                model=model, pca=pca)
 ''', '''
 def fit_distribution_clustering(P_fit, P_new, K, seed):
-    """Fit only on P_fit. Return labels and a textual method description."""
-    # TODO: предложите признаки и обучите GMM. Все fit — только на P_fit.
-    # Верните train_labels: (len(P_fit),), test_labels: (len(P_new),), description.
+    # TODO: выберите признаки, обучите преобразование только на P_fit,
+    # примените свой fit_diag_gmm и назначьте метки P_new.
+    # Верните train_labels, test_labels, description.
     raise NotImplementedError
 ''')
 code('''
 def test_distribution_method():
-    a = fit_distribution_clustering(P_train[:100], P_test[:11], K, 51)
+    result = fit_distribution_clustering(P_train[:100], P_test[:11], K, 51)
     for key, n in [('train_labels', 100), ('test_labels', 11)]:
-        labels = np.asarray(a[key])
+        labels = np.asarray(result[key])
         assert labels.shape == (n,) and np.issubdtype(labels.dtype, np.integer)
         assert np.all((0 <= labels) & (labels < K))
-    assert isinstance(a['description'], str) and a['description']
-    # Назначение фиксированного объекта не должно зависеть от соседей в тесте.
-    b = fit_distribution_clustering(P_train[:100], P_test[3:4], K, 51)
-    assert a['test_labels'][3] == b['test_labels'][0]
+    assert isinstance(result['description'], str)
+    one = fit_distribution_clustering(P_train[:100], P_test[3:4], K, 51)
+    assert one['test_labels'][0] == result['test_labels'][3]
+    boundary = fit_distribution_clustering(np.eye(4), np.eye(4)[:2], 2, 51)
+    assert boundary['test_labels'].shape == (2,)
 
-check('Метод для распределений', test_distribution_method)
-''')
-md(r'''
-### Подсказки для обсуждения после собственного плана
-
-**Признаки.** Среднее и дисперсия компактны, но не определяют форму.
-Асимметрия и четвёртый момент сохраняют больше информации, хотя чувствительны
-к редким отсчётам и хвостам. Прямые массы лежат на симплексе; полная ковариация
-в $\mathbb R^B$ вырождена из-за $\sum_b p_b=1$. PCA с меньшей размерностью
-или диагональные ковариации снимают часть численных трудностей, но меняют модель.
-
-**Геометрия Хеллингера.** Для вероятностных масс
-$$H^2(p,q)=\frac12\sum_b(\sqrt{p_b}-\sqrt{q_b})^2.$$
-Поэтому евклидово расстояние между $\sqrt p$ соответствует Хеллингеру
-с постоянным множителем. Нули допустимы. PCA без whitening сохраняет
-основные направления разброса, но отбрасывание координат теряет часть расстояния.
-GMM в PCA-пространстве — модель признаков, а не точная модель симплекса.
-
-**Счётчики.** Мультиномиальная смесь из задания 3 моделирует конечную
-точность гистограммы. Один шаблон на компоненту не описывает всю реальную
-вариативность форм: при случайном сдвиге/масштабе это приближение.
-Большое $n_i$ может давать излишнюю уверенность у неверно заданной модели.
-Без известных $n_i$ подставлять произвольные счётчики не следует.
-
-**Расположение бинов.** Хеллингер и обычные признаки масс сами по себе не
-учитывают порядок бинов. Для распределений на прямой можно сравнивать CDF
-и использовать транспортное расстояние; см. приложение A.
+if ready('E-шаг', 'EM'):
+    check('Эвристический метод', test_distribution_method)
 ''')
 code('''
-def histogram_moments(P, centers, n_features=2):
-    mean = P @ centers
-    delta = centers[None, :] - mean[:, None]
-    variance = np.maximum((P*delta**2).sum(1), 1e-12)
-    if n_features == 2:
-        return np.c_[mean, variance]
-    skew = (P*delta**3).sum(1)/variance**1.5
-    kurtosis = (P*delta**4).sum(1)/variance**2
-    return np.c_[mean, variance, skew, kurtosis]
+def fit_raw_baseline(P_fit, P_new, seed=12):
+    pca = PCA(min(8, P_fit.shape[1]-1), svd_solver='full').fit(P_fit)
+    A, B = pca.transform(P_fit), pca.transform(P_new)
+    model = GaussianMixture(K, covariance_type='full', n_init=12,
+                            reg_covar=1e-4, random_state=seed).fit(A)
+    return dict(train_labels=model.predict(A), test_labels=model.predict(B))
 
-def fit_moment_baseline(P_fit, P_new, seed=12, n_features=2):
-    A = histogram_moments(P_fit, centers, n_features)
-    B = histogram_moments(P_new, centers, n_features)
-    scaler = StandardScaler().fit(A)
-    gm = GaussianMixture(K, covariance_type='full', n_init=6, reg_covar=1e-4,
-                         random_state=seed).fit(scaler.transform(A))
-    return dict(train_labels=gm.predict(scaler.transform(A)),
-                test_labels=gm.predict(scaler.transform(B)), model=gm)
-
-methods = {'Среднее + дисперсия': fit_moment_baseline(P_train, P_test)}
-if ready('Метод для распределений'):
-    student_method = fit_distribution_clustering(P_train, P_test, K, 12)
-    methods['Предложенный GMM'] = student_method
-    print(student_method['description'])
-if ready('Мультиномиальная смесь'):
-    count_model = fit_multinomial(C_train, K, seed=8)
-    methods['EM: мультиномиальная смесь'] = dict(
-        train_labels=predict_multinomial(count_model, C_train).argmax(1),
-        test_labels=predict_multinomial(count_model, C_test).argmax(1), model=count_model)
-    print('Счётчики: сходимость', count_model['converged'],
-          '| MAP-итераций', len(count_model['history']))
+methods = {'Прямые массы → PCA → GMM': fit_raw_baseline(P_train, P_test)}
+if ready('Эвристический метод'):
+    methods['Корни масс → PCA → GMM'] = fit_distribution_clustering(P_train, P_test, K, 12)
+if ready('EM на симплексе'):
+    face_model = fit_face_mixture(P_train, K, seed=8, n_init=3)
+    methods['Генеративная смесь DCD'] = dict(
+        train_labels=predict_face(face_model, P_train).argmax(1),
+        test_labels=predict_face(face_model, P_test).argmax(1))
+    support_model = fit_face_mixture(P_train, K, seed=8, n_init=3, learn_shapes=False)
+    methods['DCD: только носитель'] = dict(
+        train_labels=predict_face(support_model, P_train).argmax(1),
+        test_labels=predict_face(support_model, P_test).argmax(1))
+    print('DCD: сходимость', face_model['converged'],
+          '| шагов', len(face_model['history'])-1,
+          '| средний test log likelihood', face_e_step(P_test, face_model['weights'],
+              face_model['rho'], face_model['alpha'])[1]/len(P_test))
 ''')
-md('''
-### Представители и устойчивость без истинных меток
+md(r'''
+### Логарифм правдоподобия по M-шагам
 
-Нарисуйте среднюю **массу**, переведённую в плотность, для каждого предсказанного
-кластера и несколько отдельных объектов. Рядом укажите число объектов и
-распределение $n_i$: не возникла ли группа исключительно из-за шумности?
-Среднее по объектам и шаблон мультиномиальной смеси различаются: второй
-взвешивает информацию о бинах по количеству отсчётов и мягким назначениям.
+Массив `face_model['history']` хранит обучающий логарифм правдоподобия
+$\ell(\theta^{(t)};P_{\rm train})$. Элемент с индексом $t=0$ соответствует
+параметрам после инициализации; элемент $t\geq1$ — параметрам после $t$
+M-шагов цикла. Последующий E-шаг вычисляет ответственности для этих параметров.
 
-Для устойчивости используйте ARI между двумя предсказанными разбиениями
-одних и тех же отложенных объектов. Здесь ARI сравнивает **две модели**,
-истинные метки ему не нужны. Устойчивое разбиение ещё не обязательно полезно.
+Вопрос: согласуется ли график с условием принятия численного M-шага?
+Можно ли по выходу на плато сделать вывод о глобальном максимуме?
+''')
+code('''
+if ready('EM на симплексе'):
+    history = face_model['history']
+    m_steps = np.arange(len(history))
+    plt.figure(figsize=(8, 3.6))
+    plt.plot(m_steps, history, marker='o')
+    plt.xlabel('M-шаг')
+    plt.ylabel('log likelihood на обучении')
+    plt.title('EM для смеси DCD: обучение на гистограммах')
+    plt.tight_layout(); plt.show()
+''')
+md(r'''
+### Проверка генеративного смысла
+
+Сравните отдельные объекты со сгенерированными из обученной модели.
+Выбранная маска отвечает за расположение точных нулей, параметры Дирихле —
+за соотношение положительных вероятностей. Условное среднее при фиксированной
+маске $S$ равно $\alpha_{kb}/\sum_{j\in S}\alpha_{kj}$ на $b\in S$;
+безусловное среднее дополнительно усредняет по маскам.
+
+Покажите по несколько представителей каждого кластера. Затем сравните
+разбиения от трёх инициализаций: ARI между двумя предсказанными разбиениями
+не требует истинных меток. Устойчивость всё ещё не гарантирует полезности групп.
 ''')
 code('''
 def plot_clusters(P_fit, labels, title):
     fig, axes = plt.subplots(1, K, figsize=(13, 2.8), sharey=True)
     for k, ax in enumerate(axes):
-        ids_k = np.flatnonzero(labels == k)
-        for j in ids_k[:5]:
-            plot_histogram(ax, P_fit[j]/widths, edges, color='grey', alpha=.22)
-        if len(ids_k):
-            plot_histogram(ax, P_fit[ids_k].mean(0)/widths, edges, color='navy', linewidth=2)
-        ax.set_title(f'Кластер {k}: N={len(ids_k)}')
-        ax.set_xlabel('t')
+        members = np.flatnonzero(labels == k)
+        for j in members[:4]:
+            plot_histogram(ax, P_fit[j]/widths, edges, color='grey', alpha=.25)
+        if len(members):
+            plot_histogram(ax, P_fit[members].mean(0)/widths, edges, color='navy', linewidth=2)
+        ax.set_title(f'Кластер {k}, N={len(members)}'); ax.set_xlabel('t')
     axes[0].set_ylabel('Плотность')
     fig.suptitle(title); plt.tight_layout(); plt.show()
 
 for name, result in methods.items():
     plot_clusters(P_train, result['train_labels'], name)
-    table(['Кластер', 'Число объектов', 'Медиана n_i'], [
-        [k, int((result['train_labels'] == k).sum()),
-         float(np.median(n_obs[train_ids][result['train_labels'] == k]))
-         if np.any(result['train_labels'] == k) else '—'] for k in range(K)])
-
-if ready('Метод для распределений'):
-    repeats = [fit_distribution_clustering(P_train, P_test, K, seed)['test_labels']
-               for seed in [11, 22, 33]]
+if ready('EM на симплексе'):
+    generated, _ = sample_face_mixture(face_model, 4, np.random.default_rng(71))
+    validate_histograms(generated)
+    fig, axes = plt.subplots(1, 4, figsize=(13, 2.7), sharey=True)
+    for ax, p in zip(axes, generated):
+        plot_histogram(ax, p/widths, edges, fill=True, alpha=.6)
+        ax.set_title(f'Сгенерировано, |S|={(p>0).sum()}')
+    plt.tight_layout(); plt.show()
+    labels_by_seed = [predict_face(fit_face_mixture(P_train, K, seed=s, n_init=3), P_test).argmax(1)
+                      for s in [11, 22, 33]]
     table(['Seed A', 'Seed B', 'ARI между разбиениями'], [
-        [a, b, adjusted_rand_score(repeats[i], repeats[j])]
-        for i, a in enumerate([11, 22, 33]) for j, b in enumerate([11, 22, 33]) if i < j])
+        [a, b, adjusted_rand_score(labels_by_seed[i], labels_by_seed[j])]
+        for i, a in enumerate([11, 22, 33]) for j, b in enumerate([11, 22, 33]) if i<j])
 ''')
 md(r'''
-### Дополнительный эксперимент студента
+### План и интерпретация
 
-Добавьте в `methods` собственный второй метод в том же формате. Например,
-четыре момента, другая размерность признаков, сглаженные гистограммы с
-обоснованным выбором масштаба или расстояние Васерштейна.
-Параметры выбирайте на внутреннем разделении обучающих объектов,
-по устойчивости и интерпретации, не по тестовым меткам.
-
-Зафиксируйте ожидаемый эффект **до** запуска: где ваш метод должен помочь
-и какую информацию он игнорирует? Затем проведите один контрольный эксперимент
-(прореживание до меньших $n_i$ либо новая независимая симуляция с иной сеткой
-$B$ или большим разбросом сдвигов). Для другой сетки нужно переобучить преобразование.
-Нельзя складывать соседние бины как высоты плотности: складываются массы/счётчики.
-''')
-code('''
-# Пример второго варианта: четыре момента; все параметры заданы заранее.
-methods['Четыре момента'] = fit_moment_baseline(P_train, P_test, n_features=4)
-''', '''
-# TODO: обучите второй метод и добавьте его в methods.
-# methods['Название'] = {'train_labels': ..., 'test_labels': ...}
-# Затем выполните контрольный эксперимент и запишите вывод ниже.
+До открытия меток запишите: какие ограничения вводит каждый метод; что
+определяет сходство; какова роль носителя; что теряет PCA; как проверялось
+обучение и что показали сгенерированные объекты. Для абляции «только носитель»
+параметры активных распределений фиксируются равными единице: это равномерные
+плотности на гранях. Что эта модель сможет и не сможет различать?
 ''')
 md(r'''
-**Разбор выбранного подхода.** В качестве сходства используем форму
-распределения на исходной оси; заранее не удаляем сдвиг и масштаб.
-Преобразование $\sqrt p$ учитывает различия масс в геометрии Хеллингера,
-PCA(8) уменьшает размерность, полная GMM описывает эллиптический разброс
-признаков. Число координат и регуляризация заданы до открытия ответов.
-Восемь координат сохраняют только часть информации; разные распределения
-могут иметь одинаковую проекцию, а GMM не моделирует ограничения симплекса.
-
-Второй вариант — GMM по четырём моментам. Он сохраняет асимметрию и
-характер хвостов при малой размерности, но не определяет распределение
-однозначно. Для контроля используем прореживание до 30 отсчётов: при таком
-шуме признаки формы менее точны. Мультиномиальная смесь моделирует сами
-счётчики и поэтому представляет отдельную, вероятностно мотивированную
-альтернативу. Её ограничение — единственная шаблонная форма на кластер.
-
-Интерпретация строится по средним и отдельным гистограммам, размерам групп
-и $n_i$. Устойчивость к seed измеряется до открытия истинных меток;
-окончательные числа и обсуждение приведены в аудите ниже.
-''', student='''
-**Мой план и вывод:**
-
-Заполните: критерий похожести; признаки/модель; способ выбора параметров;
-предполагаемая слабость; результат контрольного эксперимента; интерпретация
-кластеров. Отдельно объясните, почему ваш метод кластеризует распределения,
-а не отдельные скалярные наблюдения.
-''')
-md(r'''
-## 5. Заключительный аудит симуляции
-
-Вызовите следующую ячейку после фиксации методов. Она открывает истинные
-семейства и оценивает **отложенные объекты**. ARI не зависит от перестановки
-меток (1 — совпадение, около 0 — уровень случайного разбиения),
-NMI — нормированная взаимная информация (от 0 до 1).
-После просмотра не подбирайте параметры по этим ответам.
-
-В генераторе базовые формы — нормальная, симметричная двухмодальная,
-асимметричная и её отражение. **До индивидуальных сдвигов и растяжений** все
-четыре имеют среднее 0 и дисперсию 1. Затем добавлены одинаковые для семейств
-законы сдвига и масштаба. Границы $[-4,4]$ обрезают хвосты, массы нормируются
-внутри этого интервала; точное равенство моментов после этого не утверждается.
-Эмпирические моменты дополнительно искажены конечным $n_i$.
-''')
-code('''
-audit_truth, audit_true_masses = simulation_audit()
-audit_rows = []
-for name, result in methods.items():
-    pred = result['test_labels']
-    audit_rows.append([name, adjusted_rand_score(audit_truth[test_ids], pred),
-                       normalized_mutual_info_score(audit_truth[test_ids], pred)])
-table(['Метод', 'Test ARI', 'Test NMI'], audit_rows)
-
-fig, axes = plt.subplots(1, 2, figsize=(11, 3.4))
-for k, label in enumerate(['Нормальная', 'Две моды', 'Асимметрия →', 'Асимметрия ←']):
-    plot_histogram(axes[0], audit_true_masses[audit_truth == k].mean(0)/widths, edges, label=label)
-    pts = histogram_moments(P, centers)[audit_truth == k]
-    axes[1].scatter(*pts.T, s=9, alpha=.35, label=label)
-axes[0].set(xlabel='t', ylabel='Плотность', title='Средние истинные формы')
-axes[0].legend(fontsize=8)
-axes[1].set(xlabel='Эмпирическое среднее', ylabel='Эмпирическая дисперсия',
-            title='Два момента теряют различия формы')
-plt.tight_layout(); plt.show()
-''')
-md(r'''
-### Контрольный эксперимент: меньше отсчётов на объект
-
-Чтобы сравнить модели на более шумных гистограммах, уменьшим каждый объект
-до 30 отсчётов, выбирая их **без возвращения из уже имеющихся счётчиков**.
-Обучение и тест сохраняют раздельность; параметры моделей не подбираются.
-Изначально все $n_i\geq60$, поэтому операция корректна. Здесь меняется
-точность оценки формы, а не число объектов. Этот контроль задан заранее;
-его результаты тоже нельзя использовать для повторной настройки по меткам.
-''')
-code('''
-def thin_histograms(C, n_keep=30, seed=94):
-    rng = np.random.default_rng(seed)
-    result = []
-    for counts in C:
-        # Эквивалент многомерного гипергеометрического прореживания.
-        draws = np.repeat(np.arange(C.shape[1]), counts)
-        selected = rng.choice(draws, size=n_keep, replace=False)
-        result.append(np.bincount(selected, minlength=C.shape[1]))
-    return np.array(result)
-
-C_low = thin_histograms(C)
-P_low = C_low/C_low.sum(1, keepdims=True)
-low_methods = {'Среднее + дисперсия': fit_moment_baseline(P_low[train_ids], P_low[test_ids])}
-if ready('Метод для распределений'):
-    low_methods['Предложенный GMM'] = fit_distribution_clustering(
-        P_low[train_ids], P_low[test_ids], K, 12)
-if ready('Мультиномиальная смесь'):
-    low_model = fit_multinomial(C_low[train_ids], K, seed=8)
-    low_methods['EM: мультиномиальная смесь'] = dict(
-        test_labels=predict_multinomial(low_model, C_low[test_ids]).argmax(1))
-table(['Метод', 'Test ARI, n_i=30', 'Test NMI, n_i=30'], [
-    [name, adjusted_rand_score(audit_truth[test_ids], r['test_labels']),
-     normalized_mutual_info_score(audit_truth[test_ids], r['test_labels'])]
-    for name, r in low_methods.items()])
-''')
-md(r'''
-**Обсудите результаты.** Насколько изменились методы при уменьшении $n_i$?
-Что объясняется потерей информации, а что — неверным предположением об одной
-фиксированной форме внутри кластера? Почему один удачный seed не доказывает
-преимущество метода на всех распределениях? Не сравнивайте численные
-значения log likelihood GMM в разных признаках или с мультиномиальной
-моделью: это плотности/вероятности разных наблюдений и разных мер.
-''')
-md(r'''
-**Разбор контрольного запуска.** Два момента почти не различают семейства,
-поскольку задача специально сохраняет их теоретические значения. Четыре
-момента и sqrt/PCA сохраняют различия формы и хорошо работают при исходных
-размерах выборок. В данном запуске при $n_i=30$ качество sqrt/PCA/GMM заметно
-снижается, а мультиномиальная смесь сохраняет больше информации о группах.
-Это результат заданного генератора и эксперимента, а не универсальное
-ранжирование методов. Стабильность трёх стартов не устраняет ошибку модели.
-
-Мультиномиальные шаблоны усредняют форму внутри группы и не описывают
-индивидуальные сдвиги. Транспортный метод ниже учитывает физическое
-расстояние по оси, поэтому может делить группы по положению массы, даже
-когда желаемые классы определены формой. Для другой постановки это свойство
-может оказаться преимуществом. VAE в приложении — ещё один способ построить
-представление, но его сложность не даёт автоматического выигрыша.
+Разбор решения. Эвристические признаки дают простой рабочий ориентир.
+В смеси DCD целевая функция согласована с наблюдаемым объектом: отдельно
+моделируется носитель и распределение положительной массы. Полная модель
+может различать объекты с одинаковой маской, а абляция опирается только
+на вероятность носителя. Выигрыш на данных из DCD проверяет реализацию;
+для произвольных распределений предположения о независимых индикаторах
+до условия непустоты и о Дирихле на грани требуют содержательной проверки.
 ''', solution=True)
+md(r'''
+## 5. Итоговый аудит и контроль модели
+
+После фиксации методов откройте метки и оцените отложенные объекты.
+Данные сгенерированы из описанной модели с четырьмя профилями параметров;
+метки при обучении не используются. ARI инвариантен к нумерации кластеров,
+NMI — нормированная взаимная информация. Не настраивайте параметры по этим ответам.
+
+Не сравнивайте напрямую log likelihood PCA-GMM и DCD: плотности определены
+на разных пространствах и относительно разных мер. Для сравнения кластеризации
+используем общие метрики разбиения, устойчивость и интерпретацию.
+''')
+code('''
+audit_truth = simulation_audit()
+table(['Метод', 'Test ARI', 'Test NMI'], [
+    [name, adjusted_rand_score(audit_truth[test_ids], result['test_labels']),
+     normalized_mutual_info_score(audit_truth[test_ids], result['test_labels'])]
+    for name, result in methods.items()])
+
+fig, axes = plt.subplots(1, 2, figsize=(11, 3.5))
+for k in range(K):
+    members = audit_truth == k
+    plot_histogram(axes[0], P[members].mean(0)/widths, edges, label=f'Семейство {k}')
+    axes[1].plot(centers, (P[members]>0).mean(0), label=f'Семейство {k}')
+axes[0].set(xlabel='t', ylabel='Плотность', title='Средние распределения')
+axes[1].set(xlabel='t', ylabel='Доля активных объектов', title='Активность координат')
+axes[0].legend(fontsize=8); plt.tight_layout(); plt.show()
+''')
+md(r'''
+### Контроль нарушения предположений
+
+Применим ко всем объектам $p'_b=p_b^2/\sum_jp_j^2$. Преобразование сохраняет
+точные нули и усиливает различия положительных масс. На каждой грани оно
+обратимо, но семейство Дирихле не замкнуто относительно такого преобразования.
+Повторно обучите модели на преобразованных обучающих объектах и назначьте
+кластеры преобразованным тестовым. Размеры разбиений и параметры фиксированы.
+Такой контроль отделяет успешное восстановление собственной модели
+от поведения при изменении закона данных.
+''')
+code('''
+P_power = P**2
+P_power /= P_power.sum(1, keepdims=True)
+assert np.array_equal(P_power == 0, P == 0)
+control = {'Прямые массы → PCA → GMM': fit_raw_baseline(P_power[train_ids], P_power[test_ids])}
+if ready('Эвристический метод'):
+    control['Корни масс → PCA → GMM'] = fit_distribution_clustering(
+        P_power[train_ids], P_power[test_ids], K, 12)
+if ready('EM на симплексе'):
+    power_model = fit_face_mixture(P_power[train_ids], K, seed=8, n_init=3)
+    control['Генеративная смесь DCD'] = dict(
+        test_labels=predict_face(power_model, P_power[test_ids]).argmax(1))
+table(['Метод', 'Test ARI после преобразования', 'Test NMI'], [
+    [name, adjusted_rand_score(audit_truth[test_ids], result['test_labels']),
+     normalized_mutual_info_score(audit_truth[test_ids], result['test_labels'])]
+    for name, result in control.items()])
+''')
+md(r'''
+Вопрос: улучшилось ли качество только из-за согласования генератора
+и likelihood? Какие зависимости между нулями модель не описывает?
+Когда нужна более гибкая условная модель на гранях? Почему более сложный
+генеративный подход не обязан превосходить эвристику в каждом опыте?
+''')
+
 md(r'''
 ## Приложение A. Транспортное расстояние и медоиды
 
 Для дискретных мер на общих упорядоченных центрах $t_1<\cdots<t_B$ точно
 $$W_1(p,q)=\sum_{b=1}^{B-1}|F_p(t_b)-F_q(t_b)|(t_{b+1}-t_b),
 \qquad F_p(t_b)=\sum_{j\leq b}p_j.$$
-Формула относится к массам в **центрах** бинов. Для непрерывных кусочно
+Формула относится к массам в центрах бинов. Для непрерывных кусочно
 постоянных плотностей интеграл CDF внутри бинов вычисляется иначе.
 
 Здесь сдвинуть массу в соседний бин дешевле, чем перенести её на другой конец
@@ -964,7 +1089,7 @@ $$W_1(p,q)=\sum_{b=1}^{B-1}|F_p(t_b)-F_q(t_b)|(t_{b+1}-t_b),
 медоиды — представители выбираются из обучающих объектов, обновление
 минимизирует сумму расстояний внутри группы. Это локальная оптимизация.
 
-**Самостоятельно:** реализуйте `wasserstein_matrix` и `fit_w1_medoids`.
+Самостоятельно: реализуйте `wasserstein_matrix` и `fit_w1_medoids`.
 На каждом шаге назначьте ближайший медоид и выберите внутри каждой группы
 объект с минимальной суммой расстояний. Сделайте несколько стартов.
 Оцените сложность хранения $O(N^2)$ и чувствительность к сдвигу.
@@ -1040,7 +1165,7 @@ md(r'''
 
 В основной задаче $K=4$ задано. Для другой задачи можно сравнивать $K$ по
 внутренней валидации, BIC, устойчивости и смыслу групп. Пример ниже фиксирует
-**одно** пространство sqrt-масс → PCA(8), обучает его только на training
+одно пространство sqrt-масс → PCA(8), обучает его только на training
 и сравнивает GMM в нём:
 $$\mathrm{BIC}=-2\ell(\widehat\theta)+m\log N,\qquad
 m=(K-1)+Kd+K d(d+1)/2$$
@@ -1062,145 +1187,215 @@ plt.xlabel('K'); plt.ylabel('BIC'); plt.title('Один фиксированны
 plt.show()
 ''')
 md(r'''
-## Приложение C. Связь с прошлым семинаром: VAE → GMM
+## Приложение C. Совместная кластеризация через VAE
 
-Вместо линейного PCA можно обучить представление без меток. Возьмём
-$$z_i\sim\mathcal N(0,I),\quad
-c_i\mid z_i,n_i\sim\operatorname{Multinomial}
- (n_i,\operatorname{softmax}(g_\theta(z_i))),$$
-$$q_\phi(z_i\mid c_i,n_i)=\mathcal N(\mu_\phi,\operatorname{diag}(e^{s_\phi})).$$
-Энкодер получает $\sqrt{p_i}$ и $\log n_i$; скейлер последнего обучается
-только на обучающих объектах. Используем обычный ELBO с коэффициентом KL, равным 1:
-$$-\mathcal L_i=-\sum_b c_{ib}\mathbb E_q\log\rho_{\theta b}(z_i)
-+\frac12\sum_j(\mu_{ij}^2+e^{s_{ij}}-1-s_{ij})+\text{const}(c_i).$$
-Мультиномиальный коэффициент не влияет на градиенты, но нужен для абсолютного
-log probability. В обучении его опускаем. Деление реконструкции на $n_i$
-изменило бы соотношение с KL и перестало бы быть этим ELBO.
-Бинарная cross-entropy для долей в бинах не соответствует выбранной модели.
+Сделаем условное распределение на симплексе более гибким, сохранив механизм
+точных нулей. Генеративная модель:
+$$c\sim\operatorname{Cat}(\pi),\qquad
+z\mid c=k\sim\mathcal N(\mu_k,\operatorname{diag}(v_k)),$$
+$$m\mid z\sim\text{непустая Bernoulli-маска с }\rho_\theta(z),\qquad
+p_{S(m)}\mid m,z\sim\operatorname{Dirichlet}(\alpha_{\theta,S(m)}(z)).$$
+Неактивные координаты равны нулю. Декодер предсказывает параметры
+$\rho_\theta(z)$ и $\alpha_\theta(z)$; likelihood использует ту же меру
+на гранях, что и EM. Маска $m(p)$ наблюдается: сэмплировать её при
+вычислении likelihood или дифференцировать сквозь дискретный сэмпл не требуется.
 
-После обучения зафиксируйте энкодер, возьмите **средние** $\mu_\phi$ и обучите
-GMM на обучающих представлениях. Это двухэтапная эвристика, а не совместная
-модель кластеров и не гарантия кластеризуемости латентного пространства.
-Непрерывная нормальная априорная плотность VAE сама не задаёт $K$ кластеров.
+Энкодер задаёт гауссовское $q_\phi(z\mid p)$ и получает $\sqrt p$ вместе
+с маской. Сумма по скрытому кластеру вычисляется точно:
+$$p_\psi(z)=\sum_k\pi_k\mathcal N(z;\mu_k,\operatorname{diag}(v_k)).$$
+Оптимизируем ELBO
+$$\mathcal L(p)=\mathbb E_q[\log f_\theta(p\mid z)+\log p_\psi(z)
+-\log q_\phi(z\mid p)].$$
+Это соответствует $q(c,z\mid p)=q_\phi(z\mid p)p_\psi(c\mid z)$.
+Все параметры энкодера, декодера и смеси в prior обучаются совместно.
+Кластерные вероятности оцениваем как
+$$\widehat r_k(p)=\frac1S\sum_{s=1}^S p_\psi(c=k\mid z^{(s)}),\qquad
+z^{(s)}\sim q_\phi(z\mid p).$$
+Это приближение постериора выбранной модели, а не отдельная GMM над готовыми признаками.
 
-Код предоставлен как дополнительный эксперимент; включите `RUN_VAE = True`.
-Все параметры и число эпох зафиксированы заранее; тест не выбирает чекпойнт.
+Для инициализации сначала обучаем энкодер и декодер 100 эпох с нормальным
+prior, затем инициализируем смесь по обучающим латентным средним и проводим
+350 эпох совместной оптимизации. Тест не выбирает эпоху или чекпойнт.
+Монте-Карло оценка ELBO стохастична и не обязана монотонно расти.
 ''')
 code('''
 if RUN_VAE:
     import torch
     from torch import nn
-    import torch.nn.functional as F
-    torch.manual_seed(81)
-    torch.set_num_threads(2)
-    logn_mean = np.log(C_train.sum(1)).mean()
-    logn_scale = np.log(C_train.sum(1)).std()
+    from torch.nn import functional as F
+    torch.manual_seed(42)
+    torch.set_num_threads(1)
 
-    def encoder_input(C):
-        P = C/C.sum(1, keepdims=True)
-        logn = (np.log(C.sum(1))-logn_mean)/logn_scale
-        return torch.tensor(np.c_[np.sqrt(P), logn], dtype=torch.float32)
-
-    class HistogramVAE(nn.Module):
-        def __init__(self, B, latent=3):
+    class MixtureFaceVAE(nn.Module):
+        def __init__(self, B, K=4, latent=4):
             super().__init__()
-            self.encoder = nn.Sequential(nn.Linear(B+1, 48), nn.Tanh(), nn.Linear(48, 32), nn.Tanh())
-            self.mu = nn.Linear(32, latent)
-            self.logvar = nn.Linear(32, latent)
-            self.decoder = nn.Sequential(nn.Linear(latent, 32), nn.Tanh(), nn.Linear(32, 48),
-                                         nn.Tanh(), nn.Linear(48, B))
+            self.encoder = nn.Sequential(nn.Linear(2*B, 96), nn.Tanh(),
+                                         nn.Linear(96, 64), nn.Tanh())
+            self.mu, self.logvar = nn.Linear(64, latent), nn.Linear(64, latent)
+            self.decoder = nn.Sequential(nn.Linear(latent, 64), nn.Tanh(),
+                                         nn.Linear(64, 96), nn.Tanh())
+            self.mask_logits, self.alpha_logits = nn.Linear(96, B), nn.Linear(96, B)
+            self.prior_logits = nn.Parameter(torch.zeros(K))
+            self.prior_mu = nn.Parameter(torch.zeros(K, latent))
+            self.prior_logvar = nn.Parameter(torch.zeros(K, latent))
+            self.log2pi = float(np.log(2*np.pi))
 
-        def encode(self, x):
-            h = self.encoder(x)
-            return self.mu(h), self.logvar(h).clamp(-8, 8)
+        def encode(self, p):
+            h = self.encoder(torch.cat((p.sqrt(), (p>0).to(p.dtype)), dim=1))
+            return self.mu(h), self.logvar(h).clamp(-10, 6)
 
-        def loss(self, inputs, counts):
-            mu, logv = self.encode(inputs)
-            z = mu + torch.exp(.5*logv)*torch.randn_like(mu)
-            reconstruction = -(counts*F.log_softmax(self.decoder(z), dim=1)).sum(1)
-            kl = .5*(mu.square()+logv.exp()-1-logv).sum(1)
-            return (reconstruction+kl).mean(), reconstruction.mean(), kl.mean()
+        def decode(self, z):
+            h = self.decoder(z)
+            return self.mask_logits(h).clamp(-8, 8), (F.softplus(self.alpha_logits(h))+.05).clamp(max=500)
 
-    vae = HistogramVAE(C.shape[1])  # CPU: одинаковое устройство модели и данных.
-    inputs = encoder_input(C_train)
-    counts = torch.tensor(C_train, dtype=torch.float32)
-    optimizer = torch.optim.Adam(vae.parameters(), lr=2e-3)
+        def log_likelihood(self, p, z):
+            # p: (N,B), z: (S,N,latent); same mixed face measure as EM.
+            logits, alpha = self.decode(z)
+            mask = (p>0).to(p.dtype)
+            logp = torch.log(torch.where(p>0, p, torch.ones_like(p)))
+            log_empty = F.logsigmoid(-logits).sum(-1)
+            log_nonempty = torch.log(-torch.expm1(log_empty))
+            log_mask = (mask*F.logsigmoid(logits)+(1-mask)*F.logsigmoid(-logits)).sum(-1)-log_nonempty
+            totals = (mask*alpha).sum(-1)
+            log_face = torch.lgamma(totals)-(mask*torch.lgamma(alpha)).sum(-1)+((alpha-1)*logp).sum(-1)
+            return log_mask+log_face
+
+        def component_log_joint(self, z):
+            lv = self.prior_logvar.clamp(-8, 6)
+            log_normal = -.5*(self.log2pi+lv+
+                (z[..., None, :]-self.prior_mu).square()*torch.exp(-lv)).sum(-1)
+            return F.log_softmax(self.prior_logits, dim=0)+log_normal
+
+        def elbo(self, p, samples=2, warmup=False):
+            mu, lv = self.encode(p)
+            noise = torch.randn(samples, *mu.shape, dtype=p.dtype, device=p.device)
+            z = mu[None]+noise*torch.exp(.5*lv)[None]
+            log_q = -.5*(self.log2pi+lv[None]+
+                (z-mu[None]).square()*torch.exp(-lv)[None]).sum(-1)
+            log_prior = (-.5*(self.log2pi+z.square()).sum(-1) if warmup
+                         else torch.logsumexp(self.component_log_joint(z), dim=-1))
+            return (self.log_likelihood(p, z)+log_prior-log_q).mean(0)
+
+        @torch.no_grad()
+        def initialize_prior(self, p):
+            mu, lv = self.encode(p)
+            initial = GaussianMixture(len(self.prior_logits), covariance_type='diag',
+                n_init=10, random_state=0).fit(mu.numpy())
+            R = initial.predict_proba(mu.numpy())
+            qvar = R.T@lv.exp().numpy()/R.sum(0)[:, None]
+            self.prior_logits.copy_(torch.as_tensor(np.log(initial.weights_), dtype=p.dtype))
+            self.prior_mu.copy_(torch.as_tensor(initial.means_, dtype=p.dtype))
+            self.prior_logvar.copy_(torch.as_tensor(np.log(initial.covariances_+qvar), dtype=p.dtype))
+
+        @torch.no_grad()
+        def predict_proba(self, p, samples=100, seed=93):
+            mu, lv = self.encode(p)
+            generator = torch.Generator().manual_seed(seed)
+            noise = torch.randn(samples, *mu.shape, dtype=p.dtype, generator=generator)
+            z = mu[None]+noise*torch.exp(.5*lv)[None]
+            return self.component_log_joint(z).softmax(-1).mean(0).numpy()
+
+        @torch.no_grad()
+        def sample_distributions(self, n, seed=94):
+            rng = np.random.default_rng(seed)
+            weights = self.prior_logits.softmax(0).numpy()
+            classes = rng.choice(len(weights), n, p=weights)
+            mu = self.prior_mu.numpy()[classes]
+            sd = np.exp(.5*self.prior_logvar.clamp(-8, 6).numpy()[classes])
+            z = torch.as_tensor(mu+sd*rng.normal(size=mu.shape), dtype=self.prior_mu.dtype)
+            logits, alpha = self.decode(z)
+            rho = logits.sigmoid().numpy()
+            return np.vstack([sample_face_component(r, a, 1, rng)
+                              for r, a in zip(rho, alpha.numpy())])
+
+    # Float64 сохраняет различие между точным нулём и очень малой положительной массой.
+    vae_train = torch.tensor(P_train, dtype=torch.float64)
+    vae_test = torch.tensor(P_test, dtype=torch.float64)
+    assert np.array_equal(vae_train.numpy()>0, P_train>0)
+    vae = MixtureFaceVAE(P.shape[1], K=K, latent=4).double()
     vae_history = []
-    generator = torch.Generator().manual_seed(82)
-    for epoch in range(180):
-        totals = np.zeros(3)
-        for batch in torch.randperm(len(counts), generator=generator).split(80):
-            optimizer.zero_grad()
-            loss, recon, kl = vae.loss(inputs[batch], counts[batch])
-            loss.backward(); optimizer.step()
-            totals += len(batch)*np.array([loss.item(), recon.item(), kl.item()])
-        vae_history.append(totals/len(counts))
+    for phase, epochs, lr in [('warmup', 100, .002), ('joint', 350, .001)]:
+        if phase == 'joint':
+            vae.initialize_prior(vae_train)
+        optimizer = torch.optim.Adam(vae.parameters(), lr=lr)
+        for epoch in range(epochs):
+            total = 0.
+            for batch in torch.randperm(len(vae_train)).split(160):
+                loss = -vae.elbo(vae_train[batch], samples=2, warmup=phase=='warmup').mean()
+                assert torch.isfinite(loss)
+                optimizer.zero_grad(); loss.backward()
+                nn.utils.clip_grad_norm_(vae.parameters(), 20.)
+                optimizer.step()
+                total += len(batch)*loss.item()
+            vae_history.append((phase, epoch, total/len(vae_train)))
     vae.eval()
+    vae_R = vae.predict_proba(vae_test, samples=100)
+    np.testing.assert_allclose(vae_R.sum(1), 1., atol=1e-10)
+    vertices = torch.eye(P.shape[1], dtype=torch.float64)
     with torch.no_grad():
-        latent_train = vae.encode(inputs)[0].numpy()
-        latent_test = vae.encode(encoder_input(C_test))[0].numpy()
-        recon_P = vae.decoder(torch.tensor(latent_test[:4])).softmax(1).numpy()
-    np.testing.assert_allclose(recon_P.sum(1), 1., atol=1e-6)
-    vae_gmm = GaussianMixture(K, covariance_type='full', n_init=6,
-                             reg_covar=1e-4, random_state=83).fit(latent_train)
-    vae_labels = vae_gmm.predict(latent_test)
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.4))
-    axes[0].plot(np.array(vae_history)[:, 0], label='−ELBO без константы')
-    axes[0].set(xlabel='Эпоха', ylabel='На объект'); axes[0].legend()
-    axes[1].plot(np.array(vae_history)[:, 2], color='darkorange', label='KL')
-    axes[1].set(xlabel='Эпоха', ylabel='На объект'); axes[1].legend()
-    plt.tight_layout(); plt.show()
+        z0 = torch.zeros((1, len(vertices), 4), dtype=torch.float64)
+        assert torch.isfinite(vae.log_likelihood(vertices, z0)).all()
+        assert torch.isfinite(vae.elbo(vertices, samples=2)).all()
+        # Независимая проверка общего likelihood NumPy и PyTorch на гранях.
+        example = torch.tensor([[1., 0, 0], [.3, .7, 0], [.2, .3, .5]], dtype=torch.float64)
+        tiny = MixtureFaceVAE(3, K=2, latent=4).double()
+        z = torch.zeros((1, len(example), 4), dtype=torch.float64)
+        logits, alpha = tiny.decode(z)
+        reference = support_logpmf((example.numpy()>0).astype(float), logits[0].sigmoid().numpy())
+        reference += face_dirichlet_logpdf(example.numpy(), alpha[0].numpy())
+        np.testing.assert_allclose(tiny.log_likelihood(example, z)[0].numpy(), np.diag(reference), atol=1e-10)
+    generated_vae = vae.sample_distributions(4)
+    validate_histograms(generated_vae)
     table(['Метод', 'Test ARI', 'Test NMI'], [[
-        'VAE(3) → GMM', adjusted_rand_score(audit_truth[test_ids], vae_labels),
-        normalized_mutual_info_score(audit_truth[test_ids], vae_labels)]])
-    fig, axes = plt.subplots(1, 4, figsize=(13, 2.6), sharey=True)
-    for j, ax in enumerate(axes):
-        plot_histogram(ax, P_test[j]/widths, edges, label='Наблюдаемая')
-        plot_histogram(ax, recon_P[j]/widths, edges, label='Декодер при μ', color='darkorange')
-        ax.set_title(f'Тестовый объект {j}')
-    axes[0].legend(fontsize=8); plt.tight_layout(); plt.show()
-    print('PyTorch', torch.__version__, '| устройство CPU | 180 эпох, latent_dim=3')
+        'Совместная DCD-VAE', adjusted_rand_score(audit_truth[test_ids], vae_R.argmax(1)),
+        normalized_mutual_info_score(audit_truth[test_ids], vae_R.argmax(1))]])
+    joint_history = [value for phase, epoch, value in vae_history if phase == 'joint']
+    plt.plot(joint_history)
+    plt.xlabel('Совместная эпоха'); plt.ylabel('−ELBO на объект')
+    plt.title('Все параметры модели оптимизируются совместно'); plt.show()
+    fig, axes = plt.subplots(1, 4, figsize=(13, 2.7), sharey=True)
+    for ax, p in zip(axes, generated_vae):
+        plot_histogram(ax, p/widths, edges, fill=True, alpha=.6)
+        ax.set_title(f'Генерация VAE, |S|={(p>0).sum()}')
+    plt.tight_layout(); plt.show()
+    print('PyTorch', torch.__version__, '| CPU float64 | 100 + 350 эпох | совместная модель')
 else:
     print('VAE — необязательное приложение; RUN_VAE = False.')
 ''')
 md(r'''
-**Вопросы к VAE.** Декодер при $\mu_\phi$ — это не интеграл по
-$q_\phi(z\mid c)$ и не новая случайная гистограмма. Почему хорошая реконструкция
-не гарантирует хорошие кластеры? Не закодировал ли энкодер прежде всего $n_i$?
-Какие изменения понадобятся, чтобы дискретная компонента вошла в саму
-генеративную модель? При небольшом числе объектов PCA часто оказывается
-достаточным и более прозрачным вариантом.
+Вопросы. Где в этой модели возникает метка кластера? Почему на E-шаге
+EM и в likelihood VAE не нужно сэмплировать наблюдаемую маску? Какие
+ограничения остаются у гауссовского энкодера? Какие выводы можно сделать
+из сгенерированных объектов и вероятностей кластеров? Почему более гибкий
+декодер может быть сложнее обучить на небольшом наборе данных?
 
 ## Что сдать
 
-Реализации E- и M-шагов и цикла EM с пройденными проверками; игрушечные
-эксперименты с объяснением мягких назначений и ковариаций; минимум два
-осмысленных метода кластеризации распределений; изображения представителей,
-устойчивость, контроль с меньшими $n_i$ и итоговый аудит после фиксации параметров.
-В выводе объясните смысл объектов, выбранную геометрию и ограничения модели.
-
-**Вопросы для самопроверки:** почему EM не убывает? где возникает KL?
-когда GMM вырождается? что даёт несколько стартов? чем массы отличаются
-от плотностей? когда счётчики лучше нормированных долей? что теряется в
-двух моментах? в каких пространствах допустимо сравнивать log likelihood?
+Реализации Gaussian EM и likelihood смеси на гранях с проверками;
+игрушечные опыты; сравнение эвристик и генеративной модели на отложенных
+объектах; представителей и сгенерированные распределения; абляцию по
+носителю и контроль изменения закона данных; вывод об ограничениях.
+VAE — дополнительное задание с совместной кластерной моделью.
 ''')
 md(r'''
 ## Источники
 
 1. A. P. Dempster, N. M. Laird, D. B. Rubin (1977).
    *Maximum Likelihood from Incomplete Data via the EM Algorithm*.
-   [DOI: 10.1111/j.2517-6161.1977.tb01600.x](https://doi.org/10.1111/j.2517-6161.1977.tb01600.x).
+   [DOI](https://doi.org/10.1111/j.2517-6161.1977.tb01600.x).
 2. R. M. Neal, G. E. Hinton (1998). *A View of the EM Algorithm that Justifies
    Incremental, Sparse, and Other Variants*.
-   [Авторская страница](https://www.cs.toronto.edu/~hinton/absps/emk.pdf).
-3. scikit-learn. [Gaussian mixture models](https://scikit-learn.org/stable/modules/mixture.html),
-   [GaussianMixture](https://scikit-learn.org/stable/modules/generated/sklearn.mixture.GaussianMixture.html).
-4. SciPy. [wasserstein_distance](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.wasserstein_distance.html).
+   [Авторский PDF](https://www.cs.toronto.edu/~hinton/absps/emk.pdf).
+3. M.-L. Tang, Q. Wu, S. Yang, G.-L. Tian (2022). Распределение DCD:
+   [полный текст, определения 1–2 и формулы (2)–(4)](https://bura.brunel.ac.uk/bitstream/2438/23914/1/FullText.pdf).
+4. scikit-learn. [GaussianMixture](https://scikit-learn.org/stable/modules/generated/sklearn.mixture.GaussianMixture.html).
+   SciPy. [wasserstein_distance](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.wasserstein_distance.html).
 5. D. P. Kingma, M. Welling. *Auto-Encoding Variational Bayes*.
    [arXiv:1312.6114](https://arxiv.org/abs/1312.6114).
 
-Генератор гистограмм, контрольные опыты и VAE для счётчиков — учебные
-конструкции этого семинара; они не воспроизводят результаты указанных статей.
+Смесь DCD, генератор данных, сравнение методов и декодер совместного VAE —
+учебные конструкции на основе указанных идей; они не воспроизводят
+численные эксперименты статей.
 ''')
 
 for filled in [False, True]:
@@ -1211,8 +1406,6 @@ for filled in [False, True]:
         source = body if filled or stub is None else stub
         if not filled:
             source = source.replace('RUN_VAE = True  #', 'RUN_VAE = False  #')
-        if i == 0:
-            source += '\n**Версия: ' + ('решения и выполненные эксперименты.**\n' if filled else 'задания для самостоятельной работы.**\n')
         cell = dict(cell_type=kind, id=f'em-{i:03d}', metadata={}, source=source.splitlines(True))
         if kind == 'code':
             cell.update(execution_count=None, outputs=[])
