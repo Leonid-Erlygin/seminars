@@ -28,9 +28,22 @@
 \newcommand{\KL}{\operatorname{KL}}
 \newcommand{\R}{\mathbb R}
 \newcommand{\dd}{\,d}
+
+% Keep all prose, titles, and section headings in normal weight.
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}%
+  {-3.5ex \@plus -1ex \@minus -.2ex}%
+  {2.3ex \@plus .2ex}{\normalfont\Large}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}%
+  {-3.25ex \@plus -1ex \@minus -.2ex}%
+  {1.5ex \@plus .2ex}{\normalfont\large}}
+\renewcommand\subsubsection{\@startsection{subsubsection}{3}{\z@}%
+  {-3.25ex \@plus -1ex \@minus -.2ex}%
+  {1.5ex \@plus .2ex}{\normalfont\normalsize}}
+\makeatother
 \begin{document}
 \begin{center}
-  {\LARGE\bfseries Normalizing flows: from change of variables to learned densities}\\[6pt]
+  {\LARGE Normalizing flows: from change of variables to learned densities}\\[6pt]
   {\large Teacher's guide and worked solutions}\\[3pt]
   Bayesian machine learning \textbar\ Skoltech
 \end{center}
@@ -39,8 +52,10 @@ A normalizing flow transforms a simple random variable through an invertible
 map. Its density follows from the change-of-variables formula. The seminar
 builds this calculation from a scalar affine transformation, then uses affine
 coupling layers and their compositions to learn a two-dimensional density.
-Three implementation tasks lead to a trained RealNVP model and a held-out
-comparison with a fitted Gaussian. The optional Bayesian appendix uses the
+Tasks 1--3 lead to a trained RealNVP model and a held-out comparison with a
+fitted Gaussian. Task 4 extends the same ideas to GPU training on MNIST images,
+including dequantization, image-space densities, and bits per dimension.
+The optional Bayesian appendix uses the
 same model family as a variational approximation to a curved, posterior-shaped
 analytic benchmark. This benchmark is specified directly, rather than obtained
 as the posterior of a fitted data model.
@@ -52,15 +67,19 @@ ordinary floating-point error. It does not remove approximation, estimation,
 or optimization error in learning that transformation.
 
 The companion student and solutions notebooks have the same lesson order.
-The student notebook contains three unfinished implementations, supplied checks,
-experiments, and interpretation questions. The solutions notebook contains the
+The student notebook contains four implementation tasks, supplied checks,
+experiments, and interpretation questions. Tasks 1--3 form the 90-minute core;
+Task 4 is a separate 45--60-minute GPU extension. The solutions notebook
+contains the
 worked code and executed figures. This guide adds board derivations, suggested
 hints, answers to oral questions, and a route through the material in class.
 
 \section{Teaching plan}
 \subsection{The 90-minute lesson}
-Exercise time is included in each block. The main lesson ends with a trained
-density model; neither optional appendix is required to reach that endpoint.
+Exercise time is included in each block. This schedule covers Tasks 1--3 and
+ends with a trained two-dimensional density model. Task 4 is a separate
+45--60-minute GPU extension. Neither optional appendix is required for either
+the core lesson or the image experiment.
 \begin{center}
 \begin{tabular}{@{}p{15mm}p{52mm}p{89mm}@{}}
 \toprule
@@ -74,8 +93,8 @@ check the sign and the inverse. \\
 explain why the neural network need not be invertible. \\
 40--55 & Task 2: coupling layer & Implement both directions and per-sample
 log determinants; inspect identity initialization and checks. \\
-55--70 & Composition and Task 3 & Reverse layer order for encoding; implement
-\texttt{log\_prob} and sampling. \\
+55--70 & Composition and Task 3 & {\raggedright Apply inverse layers in reverse order; implement
+\texttt{log\_prob} and sampling.\par} \\
 70--85 & Likelihood training and diagnostics & Run supplied training;
 compare held-out log densities, samples, densities, and encoded observations. \\
 85--90 & Wrap-up & Explain what is exact, what is learned, and how this
@@ -84,23 +103,27 @@ connects with sampling and the Laplace approximation. \\
 \end{tabular}
 \end{center}
 
-\textbf{Before the seminar.} Run the complete solutions notebook on the
+Before the seminar. Run the complete solutions notebook on the
 classroom machine. The main lesson uses PyTorch, NumPy, Matplotlib, and the
-notebook display tools; all data are generated locally. Confirm that the
-training experiment completes on CPU and retain its executed outputs. Use the
+notebook display tools; its two-dimensional data are generated locally.
+Task 4 additionally needs TorchVision, a CUDA-capable GPU, and the MNIST
+training and test files. Download and cache MNIST before class, confirm that
+the installed PyTorch and TorchVision versions work together, and run the image
+extension on the GPU in advance. Confirm that the core training experiment
+completes on CPU and retain both sets of executed outputs. Use the
 student notebook for projection and keep the solutions available separately.
 Students need the chain rule, determinants, Gaussian densities, expectations,
 and basic tensor operations. Review that a matrix multiplication and an
 elementwise multiplication are different operations.
 
-\textbf{During the seminar.} Follow the cells in order. Students write the
-three mathematical implementations; data generation, plotting, optimization,
+During the seminar. Follow the cells in order. Students write the
+core mathematical implementations; data preparation, plotting, optimization,
 and evaluation helpers are supplied. Ask pairs to switch the typing role
 between tasks. A function that raises \texttt{NotImplementedError} is unfinished;
 the notebook skips its dependent experiments. Other failures should remain
 visible, because a shape error or a failed Jacobian check is useful evidence.
 
-\textbf{Protect the density-estimation endpoint.} Start coupling by minute 25,
+Protect the density-estimation endpoint. Start coupling by minute 25,
 composition by minute 55, and the training comparison by minute 70. If an
 implementation remains unfinished, show its missing mathematical step and
 continue with the supplied working solution. Shorten neural-network mechanics
@@ -117,6 +140,22 @@ without deriving their implementation. Reduce task coding to filling the
 transformation and log-determinant expressions. Show an already executed
 training run if necessary. Keep both directions, all three task contracts,
 and the difference between exact density evaluation and a learned fit.
+
+\subsection{A 45--60-minute GPU extension for Task 4}
+Keep Task 4 outside the 90-minute core. Allocate 10--12 minutes to discrete
+pixels, uniform dequantization, and the logit Jacobian; 10--15 minutes to the
+image-likelihood implementation and checks; 15--20 minutes to the supplied
+training and validation run; and 10--13 minutes to held-out bits per dimension,
+independent samples, temperature changes, and latent interpolation. Run the
+full training before class and retain its outputs. Use those outputs if the
+classroom GPU cannot complete training within the allotted block; the teaching
+time is not a hardware-independent runtime promise.
+
+The image model and loop are supplied. Students implement the likelihood
+plumbing in Task 4, where an omitted preprocessing Jacobian or a missing
+$8$ in bits per dimension creates a measurable error. Explain the dequantization
+bound before discussing image quality. Do not turn the extension into a
+separate image-classification exercise: digit labels are not training targets.
 
 \subsection{Board layout and notation}
 Keep the convention below visible. Different references call different
@@ -150,6 +189,122 @@ The essential board formula is
 \]
 The two expressions use Jacobians of opposite directions, evaluated at
 corresponding points. Their signs differ for that reason.
+
+\section{Purpose and published applications: teacher background}
+Use this section for preparation and optional discussion. In the timed core,
+choose one application for a 60--90-second introduction, then return to the
+change-of-variables derivation. The full set of examples is not an additional
+block in the 90-minute schedule.
+
+\subsection{The practical problem: a distribution that can be sampled and scored}
+A useful probabilistic model often needs both operations. We want to draw
+candidate images, physical configurations, or parameter values, and also to
+evaluate the density assigned to each candidate. A flow learns coordinates
+where a complicated distribution is related to a simple base. Its inverse
+and Jacobian make the candidate's density available; its generative map makes
+fresh candidates available. These operations support different applications,
+but they do not determine the training objective by themselves.
+
+Before showing an application, state the random variable, the information
+available for training, and the quantity required at the end. The same
+coupling architecture can serve three different statistical roles:
+\begin{center}
+\begin{tabular}{@{}p{34mm}p{57mm}p{66mm}@{}}
+\toprule
+Role & What is learned & What is supplied \\
+\midrule
+Density estimator & $q_\phi(x)$ for observations $x$ & Examples from the data
+distribution; maximize their log densities. \\
+Variational approximation & $q_\phi(\theta)$ for one target posterior & An
+evaluable log posterior kernel; sample from the flow while optimizing an
+ELBO or reverse-KL objective. \\
+{\raggedright Conditional posterior estimator\par} & $q_\phi(\theta\mid d)$ across many datasets &
+Simulated parameter--data pairs; fit a conditional density and then insert a
+new observed dataset $d$. \\
+\bottomrule
+\end{tabular}
+\end{center}
+The first role appears in the moons and MNIST experiments. The second appears
+in Appendix A. The third motivates the gravitational-wave example below.
+None is automatically Bayesian inference over the network weights $\phi$.
+
+\subsection{Scientific posterior inference: DINGO and gravitational waves}
+Dax et al. use conditional normalizing flows in DINGO to approximate posterior
+distributions of astrophysical source parameters given gravitational-wave
+data. Training on simulated parameter--data pairs amortizes the cost across
+future observations. Their DINGO-IS study analyzes 42 binary-black-hole events
+from LIGO and Virgo and combines the fast learned posterior proposal with
+likelihood-based importance sampling~\cite{dingo}.
+
+This example needs both flow operations. It generates independent proposals
+$\theta_i\sim q_\phi(\theta\mid d)$ and evaluates their proposal densities to
+form weights
+\[
+ w_i=\frac{p(d\mid\theta_i)p(\theta_i)}{q_\phi(\theta_i\mid d)}.
+\]
+Weight concentration diagnoses the proposal's quality. Importance weighting
+corrects expectation estimates under coverage and integrability assumptions;
+it does not turn a finite collection into exact independent unweighted
+posterior draws. Finite-sample and overlap limitations still matter. The
+paper's application shows why a tractable learned density can be useful even
+when an approximation needs external verification and correction.
+
+For the board, contrast this with Appendix A. DINGO learns a conditional
+posterior family from simulations across many datasets. Appendix A optimizes
+one flow against one evaluable target kernel. Both return approximate
+posterior distributions, but the source of training information and the
+expectation defining the loss differ.
+
+\subsection{Molecular equilibrium sampling: Boltzmann generators}
+A molecular equilibrium target has the form
+$\pi(x)\propto\exp[-\beta U(x)]$, where $x$ denotes a physical configuration
+and $U$ its energy. Molecular dynamics and local Monte Carlo can spend long
+periods within one metastable state. No\'e et al. introduce Boltzmann generators,
+which learn invertible transformations for direct configuration proposals.
+Their examples include a particle system and a conformational change of the
+BPTI protein; they also study free-energy differences~\cite{boltzmann}.
+
+The flow supplies configurations and a density. Its importance weights satisfy
+\[
+ w(x)\propto\frac{\exp[-\beta U(x)]}{q_\phi(x)},
+\]
+which makes reweighting and corrected sampling possible.
+Energy-based training relates directly to the reverse-KL calculation in
+Appendix A; example configurations can also help training. A low-energy,
+visually plausible configuration is not an equilibrium probability estimate.
+Correct observables depend on appropriate weights, support, and exploration
+of relevant states. The purpose is to reduce the cost of obtaining useful
+configurations, while retaining a way to assess and correct their probabilities.
+
+\subsection{Image density estimation and generation}
+RealNVP models images through invertible transformations with tractable
+likelihoods~\cite{realnvp}. Flow++ improves image density estimation using
+changes to dequantization and coupling design~\cite{flowpp}. These are concrete
+uses of normalized density models, rather than classifiers that predict a
+digit label. An image model assigns probability to pixel configurations and
+can generate new configurations by transforming base draws.
+
+Task 4 is a small teaching version of this use case. It makes the conversion
+from integer pixels to a continuous density explicit and reports a held-out
+coding-length bound in bits per dimension. It is not intended to reproduce
+the scale or quality of the published image architectures. A useful
+comparison controls the image representation and dequantization convention;
+raw continuous log densities in different units are not directly comparable.
+
+\subsection{What a likelihood cannot establish on its own}
+High density is not the same statement as semantic familiarity or safety.
+Nalisnick et al. demonstrate that image generative models, including flows,
+can assign higher likelihood to an out-of-distribution image dataset than
+to the dataset on which they were trained, including the CIFAR-10/SVHN
+comparison~\cite{ood}. The exact density formula therefore does not by itself
+provide a reliable out-of-distribution detector. Such a use requires a stated
+detection rule and evaluation on relevant alternatives.
+
+The corresponding lesson for all three applications is practical: exact
+model scoring supports likelihood comparisons, weighting, and diagnostics.
+It does not prove that a learned posterior is calibrated, a molecular sample
+has an equilibrium law, or a generated image is representative of the data.
+Ask students to identify the additional evidence needed in each example.
 
 \section{From transformed samples to a density}
 \subsection{Conservation of probability}
@@ -189,7 +344,7 @@ Expanding a region lowers its density per unit volume; contracting it raises
 that density. The Jacobian determinant supplies the correction.}
 \end{figure}
 
-\textbf{Oral prompt.} If a transformation doubles the length of every small
+Oral prompt. If a transformation doubles the length of every small
 interval, what happens to the density? It is divided by two at the corresponding
 image points. Merely replacing $z$ by $f(x)$ in the base density does not account
 for the change of units.
@@ -286,7 +441,7 @@ which derivative each branch returns. For the density, evaluate the base at
 the encoded point and \emph{add the inverse} log determinant. Do not subtract
 it again.
 
-\textbf{Interpretation answer.} Increasing $a$ stretches the distribution and
+Interpretation answer. Increasing $a$ stretches the distribution and
 reduces its density at corresponding points by $e^{-a}$. It changes both the
 encoded coordinate and the normalization term at a fixed $x$. Changing $\mu$
 translates the distribution without changing the Jacobian. The determinant
@@ -332,7 +487,7 @@ terms affect the map and its off-diagonal derivatives; they do not affect
 this determinant. Autodifferentiation through the explicit inverse still
 trains both networks through the full log density.
 
-\textbf{Board example.} In two dimensions, preserve $z_1$ and write
+Board example. In two dimensions, preserve $z_1$ and write
 $x_2=e^{s(z_1)}z_2+t(z_1)$. Its Jacobian is
 \[
  \begin{pmatrix}
@@ -451,19 +606,19 @@ verify that the network receives the preserved part in both directions.
 If reconstruction succeeds but densities disagree, inspect the determinant
 sign and the axis of the sum.
 
-\textbf{Why not invert the neural network?} Its inputs are copied unchanged
+Why not invert the neural network? Its inputs are copied unchanged
 through the layer, so they are already available at the output. Once scale
 and shift have been recomputed, each changed coordinate has a scalar affine
 inverse.
 
-\textbf{Why are zero final-layer parameters acceptable?} They initialize the
+Why are zero final-layer parameters acceptable? They initialize the
 layer as the identity. During the first gradient update, the final layer can
 receive nonzero gradients from its hidden features. Earlier layers may
 initially receive zero gradient through zero final weights and begin changing
 after the final weights move. Initializing every layer to zero would create a
 different learning problem and is not required here.
 
-\textbf{Why not calculate a determinant numerically during training?} A generic
+Why not calculate a determinant numerically during training? A generic
 dense determinant costs much more and hides the structural simplification.
 The explicit small Jacobian is an independent check of the analytic expression.
 
@@ -567,12 +722,12 @@ The expected output is $(4z_1+2z_2,z_1+2z_2)$ with log determinant $\log 6$.
 This catches omitted layers and wrong order even when a round trip is
 internally consistent.
 
-\textbf{Why must inverse layer order reverse?} For two maps,
+Why must inverse layer order reverse? For two maps,
 $g_2(g_1(z))=x$. Applying $g_2^{-1}$ first gives $g_1(z)$, and then applying
 $g_1^{-1}$ gives $z$. Applying inverse maps in the original order generally
 undoes neither composition.
 
-\textbf{Are model samples independent?} Given fixed fitted parameters,
+Are model samples independent? Given fixed fitted parameters,
 independent standard-normal base draws remain independent under the same
 deterministic map. The transformed distribution is the learned $q_\phi$.
 There is no accept/reject step or MCMC burn-in in ordinary flow sampling.
@@ -674,21 +829,21 @@ sign.
 
 \subsection{Read the diagnostic panels together}
 \begin{enumerate}
-\item \textbf{Training and validation loss.} Decreasing loss suggests the
+\item Training and validation loss. Decreasing loss suggests the
 optimizer is improving its objective. The plotted training and validation
 losses are full-data averages evaluated under the same current parameters.
 Their difference reflects different observations and fit, rather than a
 comparison of differently timed minibatch values. A validation score slightly
 better than the training score is possible with finite samples; it does not
 by itself establish a data leak.
-\item \textbf{Density contours.} A flow can place density along both curved
+\item Density contours. A flow can place density along both curved
 components. Plotting values on a finite grid does not integrate the full
 model over $\R^2$. Visual gaps or small grid mass do not prove that the
 density is unnormalized.
-\item \textbf{Generated samples.} These show the learned distribution in
+\item Generated samples. These show the learned distribution in
 observation space. Compare geometry, component occupancy, and unusual points
 with held-out observations. A pleasing scatterplot is not a likelihood check.
-\item \textbf{Encoded held-out observations.} If $q_\phi=p_{\rm data}$, applying
+\item Encoded held-out observations. If $q_\phi=p_{\rm data}$, applying
 $f_\phi$ to observations gives the base distribution. Approximately Gaussian
 encoded data support the fit, but finite scatterplots and marginal histograms
 can hide dependence and tail discrepancies. Encoding samples generated by the
@@ -709,7 +864,7 @@ the marginal variances are $(0.922,1.042)$, and the covariance is $-0.0853$.
 These are useful diagnostics, not exact moment identities for held-out data.
 A mean near zero alone would not establish a correct joint distribution.
 
-\textbf{Connect with the preceding seminars.} The Laplace approximation uses a
+Connect with the preceding seminars. The Laplace approximation uses a
 Gaussian derived from local posterior curvature. A flow provides a flexible
 normalized family, but learning its parameters adds an optimization problem.
 MCMC draws are dependent states designed to preserve a specified target;
@@ -729,6 +884,300 @@ The answers are encoding with the inverse, access to preserved coordinates
 and a conditional affine inverse, and the learned approximation to the target
 plus estimation and optimization error.
 
+\section{Task 4: image density estimation on MNIST with a GPU}
+\subsection{Purpose, scope, and preparation}
+This is the 45--60-minute extension, rather than part of the 90-minute core.
+It moves from two coordinates to all $28\times28=784$ image coordinates while
+retaining the same generative convention. The supplied image model maps a
+standard-normal base to logits, $y=g_\phi(z)$; the sigmoid then gives an image
+in $(0,1)^{784}$. Density evaluation applies the inverse flow to the logits.
+The objective fits pixel configurations, not digit labels. Labels appear only
+in visualization captions.
+
+The GPU experiment is enabled by \texttt{RUN\_MNIST = True}. Install a compatible
+TorchVision alongside PyTorch and download MNIST before class. The default
+cache is outside the seminar directory at \texttt{/tmp/sk\_bayes\_mnist}; set
+\texttt{NF\_MNIST\_CACHE} before running the notebook to choose a persistent
+location. A saved checkpoint is reused only when its recorded configuration
+matches and checkpoint reuse is explicitly enabled. The default is
+\texttt{MNIST\_RETRAIN = True}, which performs a fresh training run. Set it
+to False for a cached demonstration. The CPU objective
+and small-model checks run independently of CUDA availability. Without CUDA,
+the training block prints an explicit skip message.
+
+The image model, data preparation, optimizer, evaluation, and plots are
+supplied. Students implement one function connecting integer pixels to the
+flow's continuous density. Do not spend the exercise time reimplementing the
+784-dimensional coupling constructor. Its mathematics is the same as Task 2,
+with a larger mask and a different conditioner.
+
+\subsection{Why integer pixels need dequantization}
+An integer image is $I\in\{0,\ldots,255\}^D$, where $D=784$. A continuous
+point has probability zero under a continuous density, so $q(I)$ is not the
+probability of that integer image. Adding uniform noise lets a continuous
+model represent probability mass within each integer-pixel bin. Draw
+independent $\varepsilon_j\sim\operatorname{Uniform}(0,1)$ and set
+\[
+ u_j=\frac{I_j+\varepsilon_j}{256},\qquad
+ y_j=\operatorname{logit}(u_j)=\log u_j-\log(1-u_j).
+\]
+The denominator is 256 because an 8-bit coordinate has 256 bins. Dividing by
+255 here changes the bin width and can put bright pixels outside the intended
+unit interval. The separate real-image display uses $I/255$ only to map display
+intensities to the plotting range; it is not the density preprocessing.
+
+The uncontracted logit is a bijection from $(0,1)^D$ to $\R^D$. Its derivative
+is $1/[u_j(1-u_j)]$, so
+\[
+ \ell_{\rm pre}(u)
+ :=\log\left|\det\frac{\partial y}{\partial u}\right|
+ =\sum_{j=1}^D[-\log u_j-\log(1-u_j)].
+\]
+The flow's own density in logit coordinates is already provided by
+\texttt{model.log\_prob(y)}. Converting it to normalized-pixel coordinates gives
+\[
+ \log q_u(u)=\log q_y(\operatorname{logit}(u))+\ell_{\rm pre}(u).
+\]
+These are two distinct corrections: the model includes its coupling and final
+affine determinants; the task adds the logit determinant. Count each exactly
+once.
+
+The corresponding generative image map is
+$u=\operatorname{sigmoid}(g_\phi(z))$. It maps the entire base space into the
+open unit cube, and the resulting $q_u$ integrates to one there. The experiment
+does not contract the unit interval, clip likelihood inputs, or use clipped
+values to define a different density.
+
+\subsection{From a continuous density to discrete likelihood and bits}
+The normalized discrete model assigns an image the probability of its bin:
+\begin{align*}
+ P_\phi(I)
+ &=\int_{\prod_j[I_j/256,(I_j+1)/256)}q_u(u)\dd u\\
+ &=\int_{[0,1)^D}\frac{q_u((I+\varepsilon)/256)}{256^D}\dd\varepsilon.
+\end{align*}
+The 256 bins partition the unit interval, so summing these masses over all
+integer images gives one. Jensen's inequality yields
+\[
+ \log P_\phi(I)
+ \geq\E_\varepsilon[\log q_u((I+\varepsilon)/256)]-D\log256.
+\]
+This is the uniform-dequantization likelihood bound discussed in the flow
+literature~\cite{realnvp,flowpp}. The exercise returns the random loss
+\begin{align*}
+ L(I,\varepsilon)
+ &=-\log q_y(y)-\ell_{\rm pre}(u)+D\log256,\\
+ \operatorname{bpd}(I,\varepsilon)
+ &=\frac{L(I,\varepsilon)}{D\log2}
+ =8-\frac{\log q_u(u)}{D\log2}.
+\end{align*}
+Here \texttt{nll\_nats} means $L$, including the discrete-bin correction.
+Its noise expectation is an upper bound on the exact discrete NLL. One
+individual noise realization is a Monte Carlo estimate of that bound and need
+not itself upper-bound the exact NLL. Report the held-out average as a
+dequantized bits-per-dimension score, not an exact discrete pixel likelihood.
+Lower bpd is better under the same image representation and convention.
+
+The logit preprocessing is fixed with respect to the learned parameters.
+Consequently its Jacobian term and the bin correction do not change gradients
+in $\phi$ when the same logits are used. They are essential to the score's
+meaning and units. A decreasing training curve can therefore coexist with
+incorrect reported bpd if either term is omitted. The flow's own determinant,
+in contrast, generally depends on $\phi$ and is part of its learning signal.
+
+\subsection{Implementation contract and worked answer}
+Implement the function
+\begin{lstlisting}
+mnist_nll_terms(model, images, noise)
+\end{lstlisting}
+The input \texttt{images} has dtype uint8 and shape $(B,1,28,28)$.
+The supplied noise has the same shape and values strictly between zero and
+one. Return \texttt{nll\_nats} and \texttt{bits\_per\_dim}, each of shape $(B,)$.
+The supplied preprocessing performs the logit calculation in float64. Cast
+its outputs to the model's dtype and device without disabling gradients
+through the model.
+
+\begin{lstlisting}
+def mnist_nll_terms(model, images, noise):
+    parameter = next(model.parameters())
+    y, preprocessing_logdet = mnist_preprocess(images, noise)
+    y = y.to(device=parameter.device, dtype=parameter.dtype)
+    preprocessing_logdet = preprocessing_logdet.to(
+        device=parameter.device, dtype=parameter.dtype)
+    log_density_u = model.log_prob(y) + preprocessing_logdet
+    nll_nats = -log_density_u + MNIST_DIM * math.log(256)
+    return nll_nats, nll_nats / (MNIST_DIM * math.log(2))
+\end{lstlisting}
+
+A useful first hint is to write the two density spaces, $q_y$ and $q_u$, on
+paper. Next identify the Jacobian of the map actually applied during scoring.
+Finally convert nats per image to bits per pixel. The optimizer takes the
+mean of the returned bpd across the batch; the helper must not reduce the
+batch dimension itself.
+
+Numerical endpoints matter. With a bright pixel, float32 can round
+$(I+\varepsilon)/256$ to one before the logarithm. The supplied helper uses
+float64 noise and preprocessing, redraws exact zero noise values, and then
+casts the logits to model precision. Replacing the preprocessing with
+\texttt{images.float()/255} or clipping the logits changes the specified
+calculation. The density checks use both zero-valued and 255-valued pixels.
+
+\subsection{Independent checks before training}
+The uniform-pixel oracle has logit density
+\[
+ q_y(y)=\prod_{j=1}^D\operatorname{sigmoid}(y_j)
+                        [1-\operatorname{sigmoid}(y_j)].
+\]
+Its implied pixel density is $q_u(u)=1$: the logit density and preprocessing
+Jacobian cancel. Therefore every integer image has bin probability $256^{-D}$,
+$L=D\log256$, and bpd exactly 8, for every supplied noise draw. This checks
+normalization units and the Jacobian sign without relying on the image flow.
+The second oracle uses independent normal logits and compares the result
+with a separately written scalar expression. A parameter-gradient check
+ensures that the task has not detached the model density.
+
+The supplied image model also has a small CPU check with nonzero coupling
+parameters and a nontrivial final affine map. It verifies reconstruction,
+determinant cancellation, and density agreement. Passing these checks permits
+training; a favorable training result does not replace them.
+
+\subsection{The supplied image flow and training-only initialization}
+The default model has 14,691,168 trainable parameters and ten affine coupling
+layers. Each preserves half of a
+flattened $28\times28$ checkerboard and transforms the other half; masks
+alternate. Each conditioner is an MLP with two width-512 hidden layers and
+SiLU activations. Its final linear layer starts at zero. Changed-coordinate
+log scales use $1.5\tanh(s_{\rm raw})$, as in the core lesson.
+
+A final generative affine map gives every pixel its own logit location and
+scale:
+\[
+ y=\mu+\exp(a)\odot h,\qquad
+ \log|\det Dy/Dh|=\sum_{j=1}^D a_j.
+\]
+Both \texttt{location} and \texttt{log\_scale} are trainable parameters.
+Initialize them from the mean and standard deviation of dequantized logits
+for the first 8,192 training-split images, flooring initialization standard
+deviations at 0.1 before taking logarithms. This gives useful starting
+coordinates. No validation or test image supplies initialization moments.
+During encoding, undo this affine map before the reversed coupling layers;
+its inverse log determinant is $-\sum_j a_j$.
+
+This MLP is an educational likelihood model. It does not implement the
+convolutional and multiscale image architecture of the original RealNVP paper.
+The 784-dimensional model is supplied so students can concentrate on the
+change of variables and the statistical interpretation of its score.
+
+\subsection{Data separation, checkpointing, and runtime}
+Shuffle the official 60,000-image MNIST training set once with a fixed seed.
+Use 50,000 images to fit the model and 10,000 for validation. Keep the official
+10,000-image test set for evaluation after selecting and restoring the best
+validation checkpoint. Labels never enter the likelihood or parameter updates.
+
+Train for twelve epochs with batch size 256, Adam starting at learning rate
+$5\times10^{-4}$, cosine scheduling to $5\times10^{-5}$, and gradient-norm
+clipping at 5. Use fresh independent dequantization noise for each training
+batch. Validation and test images have fixed independent noise draws, so
+checkpoint comparisons and repeated evaluation use the same points. All
+settings are chosen before examining test results.
+
+The plotted training curve averages minibatch losses collected while the
+parameters change during an epoch. Validation uses one fixed checkpoint and
+fixed noise. These curves consequently have different averaging conventions,
+whereas the core moons curves evaluate full training and validation losses
+under the same checkpoint. Discuss the overall trend and selected epoch
+without requiring the curves to coincide or decrease monotonically.
+
+\subsection{Reference results from the executed GPU run}
+The complete reference notebook ran the actual twelve-epoch training loop on
+an NVIDIA L40. Training took about 53 seconds in this run; this is an observed
+runtime for that hardware and software stack, not a promise for other GPUs.
+Validation selected epoch 12. The initial validation score was 2.6201 bpd;
+the final results were:
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Quantity & Dequantized bits per dimension \\
+\midrule
+Epoch-12 training average, online/fresh noise & 1.7810 \\
+Selected validation score, fixed noise & 1.7909 \\
+Held-out test mean, fixed noise & 1.7844 \\
+Test standard error across image/noise pairs & 0.0030011 \\
+\bottomrule
+\end{tabular}
+\end{center}
+The test result is an evaluation of the selected model, not a criterion used
+to choose its training duration. Values in another software stack can differ.
+A cached demonstration reports the original training duration; checkpoint
+loading is a separate action. Keep the executed outputs available for slower
+classroom hardware.
+
+\subsection{Read scores, generated images, and transformations separately}
+The test table reports mean dequantized bpd and its standard error across
+held-out image/noise pairs, conditional on the fitted model. This estimates
+variation across new pairs under the same scoring scheme. It omits randomness
+from fitting, initialization and split selection, approximation error, and
+the gap between the dequantization bound and exact discrete NLL.
+
+The notebook compares consecutive held-out observations with unfiltered
+independent model draws at temperature one. It does not use class conditioning
+or discard unattractive generations. Incomplete or ambiguous digits reveal
+limitations that an average score may conceal. An unconditional density model
+is not a digit classifier, and image quality is not a classification accuracy.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{assets/mnist_samples.pdf}
+\caption{Actual reference-run output. Left: 32 consecutive held-out MNIST
+images. Right: 32 unfiltered independent draws at temperature one from the
+fitted flow, with the same grayscale limits. Several samples have recognizable
+digit shapes, while incomplete strokes and extra marks show remaining
+modeling limitations. These are generated configurations, not predicted labels.}
+\end{figure}
+
+The temperature panels use the same base draws at $T=0.65$, $0.85$, and $1$.
+Replacing $z$ with $Tz$ changes the base to $\Normal(0,T^2I)$ and hence changes
+the generated distribution. Only $T=1$ samples the model whose score was
+reported. Cleaner-looking examples at a lower temperature do not improve the
+likelihood or establish a better fit for the original model.
+
+For latent interpolation, encode consecutive held-out image pairs, linearly
+interpolate their latent vectors, and decode the path. The digit labels only
+caption its endpoints. These paths are deterministic, not independent
+samples. A line between typical high-dimensional Gaussian points can pass
+through atypical latent regions; a smooth visual transition does not prove
+that the learned density is correct.
+
+Finally, encode a dequantized held-out image and decode that same latent
+vector. Near-perfect reconstruction checks numerical invertibility, which
+holds structurally even for a poorly fitted flow. The displayed error map has
+a magnified color scale; do not interpret it as generation quality. The
+diagnostic uses an independent float64 copy of the fitted model and retains
+the original float64 dequantized logits and pixels. It checks maximum pixel
+error below $2\times10^{-10}$, logit reconstruction with absolute and relative
+tolerances $10^{-9}$, and determinant cancellation with absolute tolerance
+$10^{-8}$. Training and reported scores still use float32. The higher-precision
+copy reduces numerical roundoff for this separate check; it does not refit
+the model or improve its learned distribution.
+The reference maximum errors are $1.55\times10^{-15}$ in pixel values,
+$7.11\times10^{-15}$ in logits, and $1.14\times10^{-13}$ for determinant
+cancellation. These are numerical inversion results, not measures of the
+flow's approximation error.
+
+\FloatBarrier
+\subsection{Worked interpretation and teaching prompts}
+A suitable explanation identifies both coordinate systems and the discrete
+bin correction, then separates evaluation from visualization. For example:
+``The logit determinant converts a density per unit logit to one per unit
+normalized pixel. The $784\log256$ term accounts for the integer bins. The
+reported bpd is a dequantization-bound estimate, while independent images
+show which configurations the fitted model produces. Reconstruction checks
+an inverse and does not guarantee that fresh model samples look like digits.''
+
+Ask students which terms affect parameter gradients, which change reported
+units, and which operations change the sampled distribution. Then ask them
+to explain why setting a lower temperature, collecting more model samples,
+and taking more optimizer steps address three different aspects of the result.
+
 \section{Debugging reference}
 \begin{center}
 \begin{tabular}{@{}p{44mm}p{113mm}@{}}
@@ -737,11 +1186,11 @@ Observed problem & Check first \\
 \midrule
 Inverse fails after one layer & The network sees only preserved coordinates;
 the inverse subtracts the shift before multiplying by the inverse scale. \\
-Inverse fails only after composition & Reverse the layer order as well as
+{\raggedright Inverse fails only after composition\par} & Reverse the layer order as well as
 the direction of each layer. \\
 Inverse works, density fails & Check determinant direction, its sign, and
 whether the determinant belongs to the actually applied map. \\
-One scalar log determinant for a batch & Sum on the coordinate axis
+{\raggedright One scalar log determinant for a batch\par} & Sum on the coordinate axis
 \texttt{dim=-1}; retain one value per observation. \\
 No learned change in one coordinate & Inspect masks; identical masks preserve
 one marginal through the entire composition. \\
@@ -756,14 +1205,22 @@ CPU/device mismatch & Register masks as buffers; create scalar constants and
 base samples with matching dtype and device. \\
 Attractive samples, poor test score & Check train-only preprocessing and
 baseline fitting, inverse scoring, model capacity, and train/validation fit. \\
+MNIST score off by 8 bpd & Include $784\log256$ inside the returned NLL
+before dividing by $784\log2$. \\
+Non-finite MNIST logits & Preserve float64 dequantization preprocessing,
+strictly interior noise, and the divisor 256. \\
+{\raggedright MNIST inverse succeeds but samples look poor\par} & Reconstruction tests the
+invertible architecture; independent generations assess the fitted density. \\
+Unexpected cached image model & Check the configuration and the explicit
+\texttt{MNIST\_RETRAIN} setting before interpreting a new run. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \appendix
 \section{A flow as a Bayesian variational approximation}
-This appendix is optional and fully supplied; it introduces no fourth
-implementation task. After completing Tasks 2 and 3, enable it in setup:
+This appendix is optional and fully supplied; it introduces no additional
+implementation task beyond Tasks 1--4. After completing Tasks 2 and 3, enable it in setup:
 \begin{lstlisting}
 RUN_APPENDICES = True
 \end{lstlisting}
@@ -942,7 +1399,7 @@ its estimation uncertainty is zero. The Laplace KL estimate 4.5788 has
 Monte Carlo standard error 0.1042; compare it with the analytic value 4.7407,
 allowing for sampling variation.
 
-\textbf{Interpretation answer.} The target mean averages the entire curved
+Interpretation answer. The target mean averages the entire curved
 mass and need not equal the density mode. The trained flow improves the
 geometry and many summaries relative to Laplace, while retaining visible
 approximation error. Its model density is exactly evaluable even when its
@@ -990,9 +1447,9 @@ is not by itself an error.
 Training setting & Objective and source of samples & Main implication \\
 \midrule
 Density estimation & $-\E_{p_{\rm data}}\log q_\phi$;
-samples come from observations. & Population objective differs from
-$\KL(p_{\rm data}\Vert q_\phi)$ by a constant. \\
-Variational inference & $\E_{q_\phi}[\log q_\phi-\log\widetilde\pi]$;
+samples come from observations. & {\raggedright Population objective differs from
+$\KL(p_{\rm data}\Vert q_\phi)$ by a constant.\par} \\
+{\raggedright Variational inference\par} & $\E_{q_\phi}[\log q_\phi-\log\widetilde\pi]$;
 samples come from the flow. & Objective differs from
 $\KL(q_\phi\Vert\pi)$ by a constant independent of $\phi$. \\
 \bottomrule
@@ -1009,7 +1466,7 @@ optimization all matter. For an exactly representable target, a global
 minimum of either KL is obtained at $q_\phi=\pi$ when the divergences are
 well-defined.
 
-\textbf{Final oral prompt.} Can more samples from a fitted flow repair a wrong
+Final oral prompt. Can more samples from a fitted flow repair a wrong
 variational approximation? More samples reduce Monte Carlo error for
 expectations under that fitted $q_\phi$, under the usual moment assumptions.
 They do not change $q_\phi$ or eliminate its discrepancy from the target.
@@ -1026,5 +1483,32 @@ Laurent Dinh, Jascha Sohl-Dickstein, and Samy Bengio.
 Danilo Jimenez Rezende and Shakir Mohamed.
 \emph{Variational inference with normalizing flows}. ICML, 2015.
 \href{https://arxiv.org/abs/1505.05770}{arXiv:1505.05770}.
+
+\bibitem{dingo}
+Maximilian Dax, Stephen R. Green, Jonathan Gair, Michael P\"urrer,
+Jonas Wildberger, Jakob H. Macke, Alessandra Buonanno, and Bernhard Sch\"olkopf.
+\emph{Neural importance sampling for rapid and reliable gravitational-wave inference}.
+Physical Review Letters, 130:171403, 2023.
+\href{https://arxiv.org/abs/2210.05686}{arXiv:2210.05686};
+\href{https://doi.org/10.1103/PhysRevLett.130.171403}{published article}.
+
+\bibitem{boltzmann}
+Frank No\'e, Simon Olsson, Jonas K\"ohler, and Hao Wu.
+\emph{Boltzmann generators: sampling equilibrium states of many-body systems
+with deep learning}. Science, 365:eaaw1147, 2019.
+\href{https://arxiv.org/abs/1812.01729}{arXiv:1812.01729};
+\href{https://doi.org/10.1126/science.aaw1147}{published article}.
+
+\bibitem{flowpp}
+Jonathan Ho, Xi Chen, Aravind Srinivas, Yan Duan, and Pieter Abbeel.
+\emph{Flow++: improving flow-based generative models with variational
+dequantization and architecture design}. ICML, 2019.
+\href{https://proceedings.mlr.press/v97/ho19a.html}{PMLR 97:2722--2730}.
+
+\bibitem{ood}
+Eric Nalisnick, Akihiro Matsukawa, Yee Whye Teh, Dilan Gorur, and
+Balaji Lakshminarayanan.
+\emph{Do deep generative models know what they don't know?} ICLR, 2019.
+\href{https://arxiv.org/abs/1810.09136}{arXiv:1810.09136}.
 \end{thebibliography}
 \end{document}

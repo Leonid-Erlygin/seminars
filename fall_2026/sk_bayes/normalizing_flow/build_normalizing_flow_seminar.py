@@ -8,6 +8,8 @@ import base64
 import json
 import textwrap
 
+from normalizing_flow_mnist_cells import add_mnist_section
+
 HERE = Path(__file__).resolve().parent
 CELLS = []
 
@@ -29,8 +31,8 @@ def exercise(label, starter, solution):
 
 
 def answer(solution):
-    CELLS.append(("markdown", "**Your interpretation:**\n\n_Write your answer here._\n",
-                  "**Interpretation.** " + clean(solution), "written-answer"))
+    CELLS.append(("markdown", "Your interpretation:\n\n_Write your answer here._\n",
+                  "Interpretation. " + clean(solution), "written-answer"))
 
 
 def illustration(name, caption):
@@ -49,26 +51,33 @@ The transformation also gives a tractable, normalized density.
 
 We first derive change of variables, then implement an affine transformation,
 an affine coupling layer, and a RealNVP model. A supplied training loop fits a
-two-dimensional density to noisy moons. Appendix A uses the same model as a
+two-dimensional density to noisy moons. Task 4 fits a full-resolution MNIST
+image model on a GPU, with image grids and latent-space visualizations.
+Appendix A uses the same model as a
 variational approximation to a curved, posterior-shaped target and compares it
 with Laplace. Appendix B studies masks and support.
 
 The prerequisites are multivariate densities, the chain rule, Jacobians, and
 basic PyTorch: modules, tensors, automatic differentiation, and gradient descent.
-There are three main implementation tasks. The appendices are optional.
+There are four implementation tasks. Tasks 1–3 form the 90-minute core;
+Task 4 is a GPU practical extension. The appendices are optional.
 ''')
 markdown(r'''
 ## Setup
 
-Use Python 3.9+ with NumPy, Matplotlib, PyTorch, IPython, and a notebook interface.
-In a fresh environment install `numpy matplotlib torch ipykernel`. All data are
-generated locally; the default experiments run on a CPU. Run cells in order.
+Use Python 3.9+ with NumPy, Matplotlib, PyTorch, torchvision, IPython, and a
+notebook interface. Install `requirements.txt` using a matching PyTorch and
+torchvision build for your CUDA environment. Tasks 1–3 generate data locally
+and run on a CPU. Task 4 downloads MNIST on its first run and uses a CUDA GPU.
+Run cells in order.
 
 Each task has a function contract, checks, an experiment, and interpretation
 questions. Checks skip an implementation that raises `NotImplementedError`.
 After completing a task, rerun its checks and the dependent experiments. Other
 errors are allowed to fail so that incorrect implementations are visible.
 
+`RUN_MNIST` enables the GPU practical. Without CUDA its training is skipped
+with an explicit message; its mathematical checks still run on a CPU.
 `RUN_APPENDICES` enables the additional experiments. Fixed seeds make the
 examples repeatable on a given software stack; last digits can vary across
 versions. Training budgets and model sizes are fixed before test evaluation.
@@ -84,6 +93,7 @@ from torch import nn
 from IPython.display import display, Markdown
 
 RUN_APPENDICES = False
+RUN_MNIST = True
 TRAIN_STEPS = 1200
 VI_STEPS = 1400
 DEVICE = torch.device("cpu")
@@ -138,7 +148,7 @@ Let $Z\in\mathbb R^d$ have a known density $p_0$, usually
 $\mathcal N(0,I_d)$. Let $g_\phi:\mathbb R^d\to\mathbb R^d$ be a differentiable
 bijection with a differentiable inverse and a nonsingular Jacobian. Define
 $$X=g_\phi(Z),\qquad f_\phi=g_\phi^{-1}.$$
-Here $g$ always denotes the **generating** direction, from base to data.
+Here $g$ always denotes the generating direction, from base to data.
 The inverse $f$ encodes data into base coordinates. Some libraries use
 `forward` for encoding; the name alone does not determine a Jacobian sign.
 
@@ -167,13 +177,13 @@ markdown(r'''
 
 Take $Z\sim\mathcal N(0,1)$ and
 $$X=g(z)=\mu+e^a z,\qquad f(x)=(x-\mu)e^{-a}.$$
-The real parameter $a$ is a **log standard deviation**, not a variance.
+The real parameter $a$ is a log standard deviation, not a variance.
 The generating log determinant is $a$ and the inverse log determinant is $-a$.
 Thus
 $$\log q(x)=-\tfrac12[f(x)^2+\log(2\pi)]-a.$$
 
 1. Implement `affine_1d(value, shift, log_scale, inverse=False)`. Return the
-   transformed tensor and the log absolute derivative of the **applied map**,
+   transformed tensor and the log absolute derivative of the applied map,
    broadcast to the input shape. `inverse=False` applies $g$.
 2. Implement `affine_log_prob(x, shift, log_scale)` using the inverse map.
 3. Predict the mean and standard deviation for $\mu=1$, $a=\log 2$.
@@ -270,7 +280,7 @@ neural network need not be bijective. Even for a bijective network, a numerical
 inverse or a dense $d\times d$ determinant can be expensive; a generic dense
 determinant costs $O(d^3)$ once its Jacobian is available.
 
-RealNVP [1] uses **affine coupling**. Split coordinates into preserved part $A$
+RealNVP [1] uses affine coupling. Split coordinates into preserved part $A$
 and transformed part $B$:
 $$y_A=u_A,\qquad y_B=u_B\odot\exp s_\phi(u_A)+t_\phi(u_A).$$
 The functions $s$ and $t$ can be ordinary neural networks. They do not have to
@@ -307,7 +317,7 @@ Complete `AffineCoupling.transform(x, inverse=False)`.
 
 1. Compute $s,t$ from the masked input and apply the generating map or inverse.
 2. Return `(output, logdet)` with shapes `(B, 2)` and `(B,)`. The determinant
-   must describe the **applied** map and must include a sum over coordinates.
+   must describe the applied map and must include a sum over coordinates.
 3. Explain why the inverse reuses the same network instead of inverting it.
 
 The constructor, registered mask, and network are supplied. The last linear
@@ -421,7 +431,7 @@ if ready(2):
                                 ["Maximum log determinant", ld.max().item()]])
 ''')
 markdown(r'''
-**Interpretation questions.** Which marginal distribution is unchanged by this
+Interpretation questions. Which marginal distribution is unchanged by this
 layer? If every layer preserves coordinate 1, can the resulting flow fit an
 arbitrary distribution for that coordinate? Why does a full Jacobian check
 provide information that a round-trip check alone does not?
@@ -608,7 +618,7 @@ $$L_{\rm ML}(\phi)=H(p_{\rm data})+
        D_{\rm KL}(p_{\rm data}\Vert q_\phi).$$
 The data entropy is constant in $\phi$. The empirical objective approximates
 this expectation using observed samples; it does not require knowing their
-density. This is **density estimation**. The weights $\phi$ are optimized
+density. This is density estimation. The weights $\phi$ are optimized
 parameters, and fitting a flow this way does not perform Bayesian inference
 over those weights.
 
@@ -667,7 +677,7 @@ copy of the best validation checkpoint and restore it before test evaluation.
 The test data are never passed to this function. The final loss is allowed to
 be negative: a continuous density can have values greater than one.
 
-The model is moved to its device **before** constructing the optimizer. The
+The model is moved to its device before constructing the optimizer. The
 mask is a registered buffer and follows the model's dtype and device. These
 details keep exactly the same transform implementation usable on CPU or GPU.
 ''')
@@ -721,7 +731,7 @@ markdown(r'''
 The table reports empirical training, validation, and held-out test NLL.
 The test standard error is the sample standard deviation of pointwise test
 losses divided by $\sqrt{n_{\rm test}}$, conditional on the fitted model.
-Also inspect the **paired** difference on the same test observations. These
+Also inspect the paired difference on the same test observations. These
 standard errors describe variation across new iid test samples, not training
 randomness or the uncertainty of a new training/validation split.
 
@@ -792,7 +802,7 @@ if ready(2, 3):
     plt.tight_layout(); plt.show()
 ''')
 markdown(r'''
-**Interpretation questions.** Does the flow improve test NLL relative to the
+Interpretation questions. Does the flow improve test NLL relative to the
 Gaussian on these observations? What does the paired standard error measure?
 Why can increasing the number of generated samples fail to improve the
 learned density? Is an encoded sample mean near zero enough to establish fit?
@@ -807,14 +817,18 @@ its density, fitting error, and approximation error unchanged. The latent mean
 tests only one aspect of fit; covariance, joint geometry, and held-out log scores
 provide additional information. A visually convincing plot alone is insufficient.
 ''')
+add_mnist_section(markdown, code, exercise, answer)
+
 markdown(r'''
-## 6. What the three tasks establish
+## 7. What the four tasks establish
 
 The affine example fixes the direction and determinant sign. Coupling makes
 nonlinear transformations invertible with a cheap determinant. Composition
 builds a richer distribution while keeping density evaluation and independent
-sampling tractable. Training changes the represented density without changing
-these normalization identities.
+sampling tractable. The MNIST task extends the same calculations to 784 pixels,
+including the treatment of discrete observations and image-level evaluation.
+Training changes the represented density without changing these normalization
+identities.
 
 Before moving to the appendix, explain the difference between:
 
@@ -1000,7 +1014,7 @@ if RUN_APPENDICES and ready(2, 3):
     plt.tight_layout(); plt.show()
 ''')
 markdown(r'''
-**Interpretation questions.** Why is the target mean different from its mode?
+Interpretation questions. Why is the target mean different from its mode?
 Which approximation reproduces the curved mass in this run? Does a small
 estimated reverse KL guarantee that every rare-event probability is accurate?
 What information would be unavailable for a real posterior with unknown $Z$?
@@ -1129,7 +1143,7 @@ def build(edition):
         "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
         "language_info": {"name": "python", "version": "3.9.19", "mimetype": "text/x-python",
                           "file_extension": ".py", "pygments_lexer": "ipython3"},
-        "normalizing_flow_seminar": {"edition": edition, "main_tasks": 3, "appendices": 2}},
+        "normalizing_flow_seminar": {"edition": edition, "main_tasks": 4, "appendices": 2}},
         "nbformat": 4, "nbformat_minor": 5}
     path = HERE / f"normalizing_flow_{edition}.ipynb"
     path.write_text(json.dumps(notebook, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

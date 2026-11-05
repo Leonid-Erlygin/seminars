@@ -1,0 +1,5 @@
+numpy>=1.19
+matplotlib>=3.3
+torch>=2.0
+torchvision>=0.15
+ipykernel>=6
