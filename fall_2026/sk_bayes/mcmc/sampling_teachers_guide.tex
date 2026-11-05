@@ -306,6 +306,26 @@ interior arguments to an arbitrary tolerance would change the declared target
 near its boundaries and is unnecessary.
 
 \section{Task 1: rejection sampling}
+\subsection{What students should do}
+\begin{enumerate}
+\item Differentiate $\log\widetilde\pi(\theta)$ on $(0,1)$ to find its
+maximum, and justify the supplied uniform-proposal envelope
+$M=(1/4)^2(3/4)^6$.
+\item Implement \texttt{rejection\_sample(n\_proposals, rng)}. Draw all
+uniform candidates, then independent uniforms for the acceptance decisions.
+Return the accepted values and a Boolean mask of length
+\texttt{n\_proposals}; run the supplied checks.
+\item Run the supplied 20,000-proposal experiment. Report the accepted count
+and observed acceptance rate, compare that rate with $Z/M$, and inspect the
+accepted-draw histogram against the exact posterior density.
+\item Estimate both $I_1$ and $I_2$ from the accepted draws. Interpret their
+iid Monte Carlo standard errors using the accepted count as the sample size.
+\item Write 2--3 sentences justifying the envelope and explaining why
+multiplying the target kernel and envelope by the same positive constant
+leaves the algorithm unchanged, and why more proposals cannot repair an
+envelope that is too low.
+\end{enumerate}
+
 \subsection{The envelope and the augmented joint law}
 Suppose $q$ is a normalized density from which independent proposals can be
 drawn, and a finite constant $M$ satisfies
@@ -428,6 +448,28 @@ methods: evaluating a proposal, its density, and the target can have different
 costs in different models.
 
 \section{Task 2: self-normalized importance sampling}
+\subsection{What students should do}
+\begin{enumerate}
+\item Implement \texttt{snis(log\_weights, values)} for matching
+one-dimensional arrays. Normalize weights stably in log space and return
+the estimate, normalized weights, and weight ESS; run the supplied checks.
+\item Compare uniform and $\operatorname{Beta}(2,4)$ proposals with
+2,000 draws each. For each proposal, reuse its locations and weights to
+estimate both $I_1$ and $I_2$, and inspect the weighted histogram against the
+exact posterior density.
+\item Inspect the supplied repeated experiment with 100 independent
+replications of 500 proposals per method. Compare empirical bias, RMSE,
+and weight ESS between proposals.
+\item Compare the repeated-experiment error with the single-run plug-in
+Monte Carlo standard errors, computed separately for the mean and tail
+indicator. Account for the different proposal counts: the repeated experiment
+uses 500 per run, while the single-run comparison uses 2,000.
+\item Write 2--3 sentences comparing proposal quality using the RMSEs for
+both estimands. Explain why a large weight ESS need not give the most
+accurate estimate for every integrand, and what happens when
+$\widetilde\pi$ is multiplied by 100.
+\end{enumerate}
+
 \subsection{Changing the sampling distribution}
 Importance sampling changes the distribution generating locations and
 compensates with a density ratio. Suppose the normalized target $\pi$ is
@@ -630,25 +672,96 @@ nor a narrow plug-in MCSE establishes adequate coverage from observations
 alone. Both rely on proposal and moment assumptions.
 
 \section{Task 3: random-walk Metropolis--Hastings}
-\subsection{A Markov chain and its stationary law}
+The aim is to design repeated random updates whose equilibrium distribution
+is the posterior. Three objects connect the algorithm to the integral:
+the transition rule, the distribution of the state after a given number of
+updates, and the averages computed along one realized trajectory.
+
+\subsection{What students should do}
+\begin{enumerate}
+\item Implement \texttt{random\_walk\_metropolis} to update $C$ independent
+scalar chains together. Use fresh Gaussian proposal noise and acceptance
+uniforms for every chain and iteration, make decisions in log space, and
+reject candidates outside the target support.
+\item Store the state after every decision, including rejections. Return
+the array of states with shape $(C,T)$ and the acceptance rates with shape
+$(C,)$; preserve the input starts and run the supplied checks.
+\item Compare proposal standard deviations $s\in\{0.01,0.15,1.0\}$ from
+starts $[0.05,0.25,0.65,0.95]$. Run 6,000 transitions per chain and discard
+the first 1,000 states before computing summaries.
+\item Inspect the supplied traces, histograms, acceptance rates, lag-one
+correlations, batch ESS, and classical split $\widehat R$. Estimate both
+$I_1$ and $I_2$, comparing the naive iid standard error with the
+batch-means standard error for each, using the supplied batch size of 100.
+\item Write 3--4 sentences choosing a proposal scale using at least two
+diagnostics. Explain the limits of that evidence and the role of burn-in,
+including why discarding an initial segment does not remove dependence or
+establish convergence.
+\end{enumerate}
+
+\subsection{A transition kernel evolves a distribution}
 A Markov chain has conditional independence
 \[
  p(x_{t+1}\mid x_0,\ldots,x_t)=p(x_{t+1}\mid x_t).
 \]
-A time-homogeneous kernel $K(x,A)$ gives the probability of moving from $x$
-into a measurable set $A$, using the same rule at every iteration. A
-distribution $\pi$ is stationary for $K$ if
+The current state contains the information needed to generate the next one.
+A time-homogeneous transition kernel specifies this conditional law:
 \[
- \pi(A)=\int K(x,A)\pi(x)\,dx
+ K(x,A)=\Pr(X_{t+1}\in A\mid X_t=x).
 \]
-for every $A$. Starting a chain in $\pi$ preserves that marginal law after
-each transition. Starting elsewhere need not produce that law immediately.
+Here $x$ is the current location and $A$ is a possible destination region.
+For each fixed $x$, $K(x,\cdot)$ is a probability distribution, so
+$K(x,\mathcal X)=1$ for the whole state space $\mathcal X$.
+Time homogeneity means the rule is the same at every iteration; the realized
+states and their distributions can still change with time.
 
-MCMC builds a usable kernel with the desired stationary distribution.
-Stationarity is invariance; convergence from other starts also needs suitable
-irreducibility, recurrence, and aperiodicity conditions. Even an ergodic chain
-can mix too slowly for a practical run. Finite-run diagnostics assess
-consequences of this difficulty without proving the absence of unseen problems.
+For finitely many states, $K$ is a transition matrix:
+$K_{ij}=\Pr(X_{t+1}=j\mid X_t=i)$, with each row summing to one.
+For a continuous state space, specifying probabilities of regions also allows
+point masses, such as the chance of staying exactly at the current state.
+This transition kernel is a different object from the unnormalized target
+kernel $\widetilde\pi(x)$: $\widetilde\pi$ describes the desired density shape,
+whereas $K$ describes a random update.
+
+Let $\mu_t$ be the probability law of $X_t$ across independent repetitions of
+the entire chain experiment. To find the next law, average the conditional
+transition over the possible current states:
+\[
+ \mu_{t+1}(A)=\int K(x,A)\,\mu_t(dx).
+\]
+We abbreviate this operation as $\mu_{t+1}=\mu_tK$. Repeating the same update
+gives $\mu_t=\mu_0K^t$, where $K^t$ means $t$ successive transitions.
+For a finite state space this is ordinary multiplication of a row probability
+vector by the transition matrix. A fixed initial state $x_0$ corresponds to
+$\mu_0=\delta_{x_0}$.
+
+\subsection{Stationarity is a fixed point of the transition rule}
+A probability distribution $\pi$ is stationary, or invariant, for $K$ when
+\[
+ \pi K=\pi,\qquad
+ \pi(A)=\int K(x,A)\,\pi(dx)\quad\text{for every }A.
+\]
+For a density, $\pi(dx)=\pi(x)\,dx$. Imagine a large collection of chains
+whose current locations have distribution $\pi$. After each chain takes one
+random step, the distribution of locations is still $\pi$. Individual chains
+move, but the probability mass entering each region balances the mass leaving
+it. Starting with $X_0\sim\pi$ therefore gives $X_t\sim\pi$ at every time.
+It does not make successive states independent.
+
+\[
+ \begin{array}{rcccccc}
+ \text{one trajectory:}
+   &x_0&\longrightarrow&x_1&\longrightarrow&x_2&\cdots\\[3pt]
+ \text{laws across runs:}
+   &\mu_0&\xrightarrow{\ K\ }&\mu_0K&\xrightarrow{\ K\ }&\mu_0K^2&\cdots\\[3pt]
+ \text{stationary laws:}
+   &\pi&\xrightarrow{\ K\ }&\pi&\xrightarrow{\ K\ }&\pi&\cdots
+ \end{array}
+\]
+The first row is one random sequence of locations. The other rows describe
+probability distributions over possible locations. MCMC constructs $K$ so
+that the last row holds, then uses convergence results to justify approaching
+this equilibrium from an available initial state.
 
 \subsection{Acceptance and the full transition kernel}
 From current state $x$ with positive target density, propose
@@ -660,6 +773,8 @@ $Y\sim q(\cdot\mid x)$ and accept with probability
 \]
 A zero reverse proposal density or zero candidate target density gives
 acceptance zero. The unknown target normalizer cancels in the ratio.
+The proposal $q(\cdot\mid x)$ describes the candidate before the acceptance
+decision; $K(x,\cdot)$ describes the state actually stored after that decision.
 
 The transition includes a continuous move and a point mass at the current
 state:
@@ -671,6 +786,9 @@ Here $\delta_x$ puts all mass at $x$. The continuous accepted-move density
 usually integrates to less than one. The holding mass completes the transition
 and is the mathematical reason repeated states must be stored.
 
+\subsection{Why detailed balance preserves target mass}
+At equilibrium, $\pi(x)q(y\mid x)\alpha(x,y)$ describes the density of
+probability flow from $x$ to $y$ through accepted proposals.
 The accepted flow satisfies
 \begin{align*}
  \pi(x)q(y\mid x)\alpha(x,y)
@@ -686,6 +804,138 @@ Integrating over $x$ gives stationarity:
 \]
 Detailed balance is a sufficient construction of stationarity; it is not a
 necessary property of every MCMC method.
+
+For a symmetric proposal, a move toward a higher target density is always
+accepted. The reverse move is accepted less often, in exactly the proportion
+needed to balance the larger amount of mass already present at the
+higher-density location. Thus a preference for accepting uphill moves is
+compatible with preserving the whole target distribution. The chain continues
+to visit lower-density regions in their appropriate proportions.
+
+\subsection{A two-state example of preservation and approach to equilibrium}
+Consider states $A$ and $B$ with target probabilities
+$\pi=(0.6,0.4)$ and transition matrix
+\[
+ K=\begin{pmatrix}
+       0.8&0.2\\
+       0.3&0.7
+    \end{pmatrix}.
+\]
+Rows give the current state and columns the next state, both in the order
+$A,B$. From $A$, move to $B$ with probability $0.2$; from $B$, move to $A$
+with probability $0.3$. At equilibrium the mass going each way is the same:
+\[
+ \underbrace{0.6\times0.2}_{A\ \text{to}\ B}
+ =\underbrace{0.4\times0.3}_{B\ \text{to}\ A}=0.12.
+\]
+Consequently $\pi K=\pi$. Among chains already distributed as $\pi$, the
+locations change while their marginal probabilities of $A$ and $B$ remain
+$0.6$ and $0.4$.
+
+Now start every chain at $A$, and let $p_t=\Pr(X_t=B)$. The next-step
+probability includes arrivals from $A$ and chains staying at $B$:
+\[
+ p_{t+1}=(1-p_t)0.2+p_t0.7=0.2+0.5p_t.
+\]
+Subtracting the equilibrium probability gives
+\[
+ p_{t+1}-0.4=0.5(p_t-0.4),\qquad
+ p_t=0.4+2^{-t}(p_0-0.4).
+\]
+The discrepancy halves with each transition:
+\begin{center}
+\begin{tabular}{lrrrrrr}
+\toprule
+Iteration $t$ & 0 & 1 & 2 & 3 & 4 & $\infty$\\
+\midrule
+$\Pr(X_t=B)$ & 0 & 0.2 & 0.3 & 0.35 & 0.375 & 0.4\\
+\bottomrule
+\end{tabular}
+\end{center}
+Preservation of $\pi$ and convergence toward $\pi$ are visible as separate
+facts: $p_0=0.4$ stays at $0.4$, while $p_0=0$ approaches $0.4$.
+
+This matrix can itself be built by MH. Use a symmetric proposal that switches
+states with probability $0.3$ and proposes the same state otherwise.
+Accept $A\to B$ with probability $0.4/0.6=2/3$, giving an actual transition
+probability $0.3(2/3)=0.2$. Accept $B\to A$ with probability one, giving
+$0.3$. The remaining probability in each row is the holding probability.
+
+\subsection{Why stationarity alone does not imply convergence}
+The equation $\pi K=\pi$ specifies a preserved distribution. Convergence
+from an initial law $\mu_0$ is the additional statement
+\[
+ \|\mu_0K^t-\pi\|_{\rm TV}\longrightarrow0,\qquad
+ \|\mu-\pi\|_{\rm TV}=\sup_A|\mu(A)-\pi(A)|.
+\]
+Total variation measures the largest discrepancy in the probability assigned
+to a region. In particular, convergence makes the late-time state law
+approximately the target law even when the initial law differs from $\pi$.
+
+Two simple kernels show what stationarity alone leaves unresolved.
+The identity matrix preserves every distribution, but a chain started at
+$A$ stays there forever. The matrix
+\[
+ K_{\rm flip}=\begin{pmatrix}0&1\\1&0\end{pmatrix}
+\]
+preserves the uniform distribution on $\{A,B\}$, but a chain started at $A$
+alternates deterministically. Its marginal law alternates too, rather than
+approaching the uniform law.
+
+For a finite state space, irreducibility and aperiodicity give convergence
+to the unique stationary distribution. Irreducibility means states
+communicate; aperiodicity rules out a compulsory cycle of return times.
+On general state spaces, positive Harris recurrence and aperiodicity are
+standard sufficient conditions. Positive Harris recurrence requires an
+invariant probability law and guarantees that, from every starting state,
+each set having positive target probability is visited repeatedly with
+probability one. The formal convergence results and their assumptions are
+developed in \cite{robertsrosenthal}.
+
+For Task 3, the Gaussian proposal has positive density between any two
+interior locations in $(0,1)$, and the target is positive there, so accepted
+transitions can explore the whole target support. Rejection provides a
+positive chance of holding at each interior state. These features support
+the required exploration and absence of a compulsory cycle.
+They do not specify how many transitions will be enough. The proposal scale
+changes the kernel and its mixing speed while preserving the same target.
+
+\subsection{What converges along one trajectory}
+Marginal convergence concerns the distribution of $X_t$ across repeated
+runs at a fixed, late time. In practice we usually have one long dependent
+trajectory. The Markov-chain ergodic theorem connects this trajectory to
+integration: under positive Harris recurrence and $\E_\pi|f|<\infty$,
+\[
+ \widehat I_N=\frac1N\sum_{t=1}^N f(X_t)
+ \longrightarrow \E_\pi[f(X)]
+ \quad\text{almost surely}.
+\]
+For an indicator, this says that, for each fixed region $A$,
+\[
+ \widehat\pi_N(A)=\frac1N\sum_{t=1}^N\ind\{X_t\in A\}
+ \longrightarrow\pi(A).
+\]
+Thus a histogram of a long trajectory estimates target probabilities through
+the fraction of iterations spent in its bins. Every iteration counts,
+including repeated locations after rejection. In the two-state example,
+one long run spends a fraction approaching $0.4$ in $B$, whereas the table
+above describes the probability of $B$ at each time across many runs.
+
+The locations $X_t$ generally keep fluctuating. The quantities approaching
+target values are their marginal laws, occupation frequencies, and suitable
+averages, with different convergence statements for each.
+Aperiodicity is needed for the marginal convergence result above; it is
+not required for this ergodic law. For example, the alternating chain has
+time fractions tending to $1/2$ despite its oscillating marginal laws
+\cite{robertsrosenthal}.
+
+For the coin posterior, choosing $f(\theta)=\theta$ makes the trajectory
+average approach $3/10$, while choosing $f(\theta)=\ind\{\theta>0.5\}$
+makes the fraction of visits above $0.5$ approach the exact posterior tail
+probability. Starting near a boundary can distort early averages.
+Discarding a fixed prefix reduces its contribution but does not certify
+equilibrium. Even a chain started exactly in $\pi$ has dependent draws, so
+precision still requires the autocorrelation analysis in the next section.
 
 \begin{figure}[htbp]
 \centering
@@ -961,6 +1211,27 @@ a clear illustration.
 
 \appendix
 \section{Task A: asymmetric proposals and multimodality}
+\subsection{What students should do}
+If completing the optional appendix:
+\begin{enumerate}
+\item Implement \texttt{mh\_log\_accept} using the current and candidate
+target log densities and the forward and reverse proposal log densities.
+Return a log acceptance probability capped at zero, with the Hastings
+correction in the correct direction; run the supplied checks.
+\item Enable the appendix with \texttt{RUN\_APPENDIX = True} after completing
+Task 3. Run the supplied comparison of the local Gaussian random walk and
+the broad independence sampler on the two-mode target: four starts
+$[-4,-4,4,4]$, 8,000 transitions per chain, and the first 1,000 discarded.
+Use random-walk standard deviation $0.4$ and independence proposal
+$\Normal(0,5^2)$.
+\item Inspect each chain's positive-mode fraction and mode-switch count,
+alongside traces, pooled estimates, acceptance rates, and split
+$\widehat R$.
+\item Explain why high acceptance or an accurate pooled mean can coexist
+with poor exploration of the modes, and why the independence proposal
+requires the Hastings correction.
+\end{enumerate}
+
 \subsection{Two separated modes}
 Consider the equal mixture
 \[
@@ -1074,6 +1345,12 @@ convergence certificate.
 Art B. Owen.
 \emph{Monte Carlo theory, methods and examples}, Chapter 9: Importance sampling.
 \href{https://artowen.su.domains/mc/Ch-var-is.pdf}{Available from the author's website}.
+
+\bibitem{robertsrosenthal}
+Gareth O. Roberts and Jeffrey S. Rosenthal.
+General state space Markov chains and MCMC algorithms.
+\emph{Probability Surveys}, 1:20--71, 2004.
+\href{https://www.probability.ca/jeff/ftpdir/probsurv.pdf}{Available from the author's website}.
 
 \bibitem{vehtari}
 Aki Vehtari, Andrew Gelman, Daniel Simpson, Bob Carpenter, and Paul-Christian
