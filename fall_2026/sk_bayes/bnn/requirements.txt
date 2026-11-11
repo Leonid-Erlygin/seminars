@@ -3,3 +3,4 @@ matplotlib>=3.3
 torch>=2.0
 torchvision>=0.15
 ipykernel>=6
+ivon-opt==0.1.3

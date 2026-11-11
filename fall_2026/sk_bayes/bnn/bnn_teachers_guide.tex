@@ -59,6 +59,9 @@ training loops, and plotting are supplied. Students implement the calculations
 that connect model draws, probabilities, uncertainty scores, and acquisition.
 The companion student and solutions notebooks share their lesson order;
 this guide provides derivations, worked answers, hints, and interpretation.
+An additional, fully worked demonstration compares dropout with an explicit
+Gaussian weight posterior fitted by IVON. It adds no student implementation
+task and can be shown from its executed figures after the timed material.
 
 The central distinction is between a probability estimated accurately under
 an approximate model and a probability that is accurate for the real data.
@@ -123,6 +126,12 @@ its checks, 15--20 to the supplied acquisition experiment, and 10--15 to
 learning curves, acquired images, and paired comparisons. Run the complete
 experiment before class. This teaching allocation is not a hardware-independent
 promise about training runtime.
+
+The supplied IVON comparison is a separate demonstration. Allow approximately
+5--10 minutes to explain what is sampled, inspect the paired prediction plots,
+and compare predictive scores. Show the already executed results when the
+timetable is full. The four implementation tasks and their time allocations
+do not depend on completing this demonstration.
 
 \subsection{Board notation}
 \begin{center}
@@ -1114,6 +1123,305 @@ and acquisition computation. A planned follow-up can study different batch
 selection or distribution shift, but the existing test set would then be a
 development resource if its results influence that choice.
 
+\FloatBarrier
+\section{Supplied demonstration: explicit variational weights with IVON}
+\subsection{Purpose and the comparison to dropout}
+This section is a worked example, with all training and prediction code
+provided in both notebooks. Students do not implement a fifth task. Its
+purpose is to make the posterior approximation visible: dropout samples
+subnetworks through activation masks, whereas IVON samples numerical weights
+from a fitted Gaussian distribution.
+
+Improved Variational Online Newton (IVON) is a variational optimizer introduced
+in the 2024 ICML paper by Shen and colleagues~\cite{ivon2024}. It combines
+updates of the weight means with a diagonal curvature state that determines
+the posterior variances. The network can retain familiar linear,
+convolutional, and activation layers. A different optimizer and sampling
+mechanism make it a Bayesian neural-network approximation; no special
+``Bayesian activation'' is required.
+
+This is a modern optimization method for a comparatively simple posterior
+family. A diagonal Gaussian cannot represent weight correlations or separate
+posterior modes. The demonstration compares two fitted approximations and
+their predictive behavior. It does not establish that either has recovered
+the exact weight posterior, or that a newer method must give better
+uncertainty on every dataset.
+
+\subsection{The Gaussian approximation and its objective}
+For a flattened parameter vector with $d$ components, IVON uses
+\[
+ q(w)=\prod_{j=1}^{d}\Normal(w_j;\mu_j,\sigma_j^2),
+ \qquad w_j=\mu_j+\sigma_j\epsilon_j,
+ \quad \epsilon_j\sim\Normal(0,1).
+\]
+Means and variances are fitted using training data. Every weight and bias in
+the demonstration belongs to this approximation; dropout is disabled in the
+IVON network. At fixed sampled weights, the network is deterministic.
+
+With $N$ observations and a prior $p(w)$, the negative ELBO divided by the
+dataset size is
+\[
+ \mathcal J(q)=\frac1N\E_q\!\left[
+    \sum_{i=1}^{N}-\log p(y_i\mid x_i,W)\right]
+       +\frac1N\KL(q(w)\Vert p(w)).
+\]
+For a zero-mean isotropic Gaussian prior of precision $\alpha$,
+\[
+ \KL(q\Vert p)=\frac12\sum_{j=1}^{d}
+ \left[\alpha(\mu_j^2+\sigma_j^2)-1
+              -\log(\alpha\sigma_j^2)\right].
+\]
+The first term rewards a good fit under sampled weights. The KL term penalizes
+departures from the prior and prevents variational inference from reducing to
+an unconstrained search for accurate stochastic predictions. The displayed
+KL expression explains the objective; it is not an extra loss term added to
+the IVON training loop.
+
+The official implementation uses an effective sample size $\lambda$,
+\texttt{ess}, and a prior coefficient $\delta$, called
+\texttt{weight\_decay}. For its mean-cross-entropy convention,
+\[
+ \sigma_j^2=\frac{1}{\lambda(h_j+\delta)},
+ \qquad \alpha=\lambda\delta,
+\]
+where $h_j$ is the fitted diagonal curvature state. It is not the exact
+Hessian of the complete posterior. Setting $\lambda=N$ matches the ordinary
+dataset likelihood scaling. In the 120-observation example,
+$\lambda=120$ and $\delta=10^{-4}$ imply prior precision $0.012$.
+Changing \texttt{ess} changes the effective likelihood count, the posterior
+spread, and, if $\delta$ is held fixed, the implied prior precision as well.
+It is not the number of Monte Carlo prediction draws. To vary dataset size
+while holding a chosen prior precision $\alpha$ fixed, set
+$\delta=\alpha/N$ along with $\lambda=N$.
+
+\subsection{Training and coherent prediction draws}
+The essential official API is short:
+\begin{lstlisting}
+optimizer = ivon.IVON(
+    model.parameters(), lr=chosen_lr,
+    ess=len(x_train), weight_decay=1e-4,
+)
+for step in range(train_steps):
+    with optimizer.sampled_params(train=True):
+        optimizer.zero_grad(set_to_none=True)
+        loss = F.cross_entropy(model(x_train), y_train)
+        loss.backward()
+    optimizer.step()
+\end{lstlisting}
+The context samples weights and collects the stochastic likelihood gradient.
+Leaving it restores the parameter means; \texttt{step()} updates the
+variational state. Backpropagation belongs inside the sampling context, while
+the parameter update follows it. The optimizer already incorporates its
+Gaussian prior. Adding the displayed KL, an additional L2 term, or a second
+regularizer to this loss would change the intended objective.
+The notebook's supplied sampling helper also restores weight means if a
+sampling block is interrupted. Its checks verify coherent draws across
+chunks, positive variances, and preservation of the fitted optimizer state
+during prediction.
+
+For prediction, sample a weight vector and keep it fixed across all inputs
+in one function draw:
+\begin{lstlisting}
+model.eval()                 # the IVON model has dropout probability zero
+draws = []
+with torch.no_grad():
+    for _ in range(n_draws):
+        with optimizer.sampled_params():
+            draws.append(model(x_grid).softmax(dim=-1))
+probabilities = torch.stack(draws)  # (T, N, C)
+mean_probability = probabilities.mean(dim=0)
+\end{lstlisting}
+If prediction is chunked, retain the same context across every chunk of a
+draw. The resulting tensor has the same meaning as Task 1, so Task 2's
+entropy and MI calculations apply unchanged. Activating dropout while also
+sampling IVON weights would define an additional source of randomness that
+this comparison does not fit or analyze.
+
+\subsection{The controlled one-dimensional comparison}
+The demonstration reuses all 120 observations from the original four-interval
+example. Both methods use the supplied $1\to32\to32\to2$ tanh network from
+the small-data acquisition experiment, with input scaling $x/5$.
+Within each paired repeat, they start from the same numerical weights.
+The baseline uses dropout probability $0.2$; IVON has dropout probability
+zero and learns variational weight uncertainty. The original sigmoid-network
+example in Tasks 1 and 2 remains a separate fit. Compare the two columns of
+this demonstration with each other, rather than attributing a difference
+between architectures to posterior inference alone.
+A training and validation pilot with the original sigmoid architecture left
+IVON near chance under the 4,000-update budget. The shared tanh architecture
+fits more effectively within that budget and makes the weight-sampling
+comparison easier to interpret.
+
+Both receive 4,000 full-batch updates, with one stochastic likelihood-gradient
+evaluation per update, and 200 model draws for posterior prediction. Equal
+update and draw counts make these budgets explicit; the two optimizers need
+not have the same wall-clock cost. Adam uses the supplied one-cycle policy
+with maximum learning rate $0.03$. IVON starts at learning rate $0.1$ and
+uses the multiplier
+\[
+ 0.05+0.95\,\frac{1+\cos(\pi t/4000)}{2}.
+\]
+Its curvature settings are \texttt{hess\_init=1}, \texttt{beta2=0.999},
+and \texttt{clip\_radius=0.1}. Both use regularization coefficient
+$10^{-4}$, and IVON uses \texttt{ess=120}. These optimizer policies were
+fixed using training and validation checks. Their update scales differ,
+so a shared numerical learning rate would not establish a matched
+optimization policy. Matching the regularization coefficient alone does
+not establish equivalent prior distributions for dropout and IVON either.
+
+The three paired repeats use seeds 11, 12, and 13. Only after fitting all
+six models does the example generate the final 2,048-point evaluation sample
+with population seed 91027. There is no final-test early stopping or
+checkpoint selection.
+
+The evaluation population remains the specified mixture of intervals.
+Predictive accuracy, NLL, and Brier score therefore evaluate inputs on that
+population's support. Inspect the empty
+gap and extrapolation through the plots, without assigning them unobserved
+ground-truth labels. Repeat-level variability describes the stated seeds and
+fitting policy, rather than uncertainty about every possible BNN method.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{assets/ivon_toy_comparison.pdf}
+\caption{The supplied paired comparison on the original interval example.
+Each column shows a fitted approximation through sampled probability curves,
+the predictive mean, and a pointwise 5--95\% band, followed by predictive
+entropy, expected conditional entropy, and MI. The probability band describes
+variation between sampled models; it is neither a confidence interval for the
+Monte Carlo mean nor a predictive interval for a binary label.}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{assets/ivon_toy_training.pdf}
+\caption{Training diagnostics for the supplied comparison. A sampled
+training cross entropy is a noisy conditional loss, not the predictive NLL
+of the probability average. Its plotted likelihood component also omits the
+variational prior and entropy terms in the full IVON objective. The histogram
+shows the learned Gaussian standard deviations across weights and biases.}
+\end{figure}
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Method & Accuracy & NLL & Brier & Fit seconds \\
+\midrule
+Dropout & $0.9985\pm0.0000$ & $0.0130\pm0.0004$ & $0.0057\pm0.0001$ & $2.82\pm0.02$ \\
+IVON & $0.9806\pm0.0016$ & $0.1578\pm0.0020$ & $0.0687\pm0.0020$ & $3.28\pm0.06$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+These are means $\pm$ sample standard deviations over the three fitting
+seeds, evaluated on the same 2,048 population observations. Zero displayed
+standard deviation means zero at the table's rounding precision. The Brier
+score sums squared probability errors over both classes. Dropout fits this
+population more accurately under the specified budget. IVON provides a
+different, explicit weight approximation and visible uncertainty; that
+construction alone does not ensure improved predictive scores.
+The fitting times are measurements from this CPU run and exclude posterior
+prediction. They are not hardware-independent training-time guarantees.
+
+\FloatBarrier
+\subsection{The supplied GPU image comparison}
+The image demonstration compares IVON with a dropout CNN using a fixed
+supervised MNIST training set. It has no acquisition loop and no student
+implementation task. Its comparison question is how the two fitted
+approximations predict after seeing the same training labels; Task 4 asks
+a different question about which labels to acquire.
+
+Uniformly sample 1,000 official training images for fitting and reserve a
+disjoint 1,000-image validation sample. The two methods use the same CNN as
+Task 4, with dropout probability $0.5$ for Adam and zero for IVON. Each of
+three paired repeats shares its initial numerical weights and minibatch-index
+stream. Both methods receive 600 stochastic-gradient evaluations with batch
+size 64, followed by 30 model draws for prediction. Shared seeds do not make
+a dropout mask and a Gaussian weight sample the same source of randomness.
+
+Adam uses constant learning rate $0.001$ and IVON uses $0.1$. Both set
+\texttt{weight\_decay} to $10^{-4}$. IVON additionally uses
+\texttt{ess=1000}, \texttt{hess\_init=1}, \texttt{beta2=0.99}, and
+\texttt{clip\_radius=0.1}; its implied prior precision is $0.1$.
+During development, the IVON learning rates $0.1$ and $0.03$ and one cosine
+schedule were checked on validation data. The displayed policy is fixed
+across repeats, without early stopping or checkpoint selection. This is
+a small comparison under an announced gradient budget, not an exhaustive
+search for each method's best possible performance.
+
+Load the official test set only after all six fits are complete. Report
+accuracy, predictive NLL, multiclass Brier score, and 15-bin ECE on its
+10,000 images. The Brier convention here is
+\[
+ \frac1n\sum_{i=1}^n\sum_{c=1}^{10}
+     (\widehat p_{ic}-\mathbf1[y_i=c])^2.
+\]
+For two classes this summed convention equals twice the mean squared error
+of the class-1 probability. State the convention when quoting a Brier score.
+The total elapsed time printed by the demonstration includes fitting,
+validation, and test prediction. It does not measure training time alone.
+
+Set \texttt{RUN\_IVON=False} to disable the supplied comparisons and
+\texttt{RUN\_MNIST=False} to skip their GPU part. The image block requires
+CUDA and the official \texttt{ivon-opt} package. Its dataset cache is shared
+with Task 4, but the training labels and fitted models are independent of
+that task's acquisition experiment. Its supplied prediction code also runs
+when the student exercise functions are unfinished.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{assets/ivon_mnist_comparison.pdf}
+\caption{Fixed-label GPU comparison of MC dropout and IVON. Bars and error
+bars summarize three paired repeats through their means and sample standard
+deviations, with individual results shown as points. The reliability diagram
+uses the first paired repeat and the same 15-bin convention as the table.}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{assets/ivon_mnist_examples.pdf}
+\caption{Four MNIST images selected through average predictive entropy
+across the two methods in the first repeat. Labels are displayed after this
+probability-based selection. Class-probability bars show how the two fitted
+approximations distribute their uncertainty on the same image; their error
+bars show standard deviation across model draws. These are
+selected illustrations, not an estimate of typical test-set performance.}
+\end{figure}
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Method & Accuracy & NLL & Brier & ECE \\
+\midrule
+Dropout & $0.9562\pm0.0020$ & $0.1427\pm0.0068$ & $0.0667\pm0.0029$ & $0.0108\pm0.0012$ \\
+IVON & $0.9236\pm0.0077$ & $0.2892\pm0.0292$ & $0.1226\pm0.0115$ & $0.0491\pm0.0005$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The entries show mean $\pm$ sample standard deviation across the three
+paired repeats. Under this specific training policy, dropout has better
+average accuracy, NLL, Brier score, and ECE. This provides a useful counterpoint
+to the method's newer publication date: the fitted model, optimization
+budget, and chosen prior still determine its practical performance.
+The conclusion applies to this small, fixed-budget experiment.
+The complete supplied image comparison took 10.6 seconds on an NVIDIA L40
+in the recorded run, including validation and test prediction.
+
+\FloatBarrier
+\subsection{Discussion prompts and interpretation}
+Ask students to identify what changes in a model draw: masks in the dropout
+model, or weight values in IVON. Then ask whether a larger probability band
+improved predictive NLL or calibration. Both models can have confident
+extrapolations, and neither a wider band nor a larger MI proves that an
+approximation is closer to the exact posterior.
+
+Use accuracy, predictive NLL, Brier score, and calibration together. A good
+class decision can coexist with a poor probability estimate. Prior strength,
+optimization, the posterior family, and finite Monte Carlo integration can
+all affect the observed difference. Increasing the draw count addresses
+only the last of these. The purpose of the supplied example is to expose
+those distinctions through two concrete fitted models, rather than prescribe
+one method as a universal replacement for the other.
+
 \appendix
 \section{Data geometry, intrinsic ambiguity, and unsupported inputs}
 This optional appendix reuses the supplied toy fit and uncertainty calculations;
@@ -1179,6 +1487,13 @@ notebooks implement the displayed methods locally and keep both reference
 notebooks unchanged.
 
 \begin{thebibliography}{9}
+\bibitem{ivon2024}
+Yuesong Shen and colleagues.
+\emph{Variational learning is effective for large deep networks}.
+ICML, 2024.
+\href{https://proceedings.mlr.press/v235/shen24b.html}{PMLR 235:44665--44686}.
+\href{https://github.com/team-approx-bayes/ivon}{Official optimizer and usage examples}.
+
 \bibitem{gal2016}
 Yarin Gal and Zoubin Ghahramani.
 \emph{Dropout as a Bayesian approximation: representing model uncertainty in

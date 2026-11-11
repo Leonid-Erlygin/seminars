@@ -1,0 +1,79 @@
+{
+  "validated_at_utc": "2026-11-10T09:53:10.014257+00:00",
+  "status": "passed",
+  "full_build_command": "./build.sh",
+  "notebook": {
+    "file": "sampling_first_solutions.ipynb",
+    "cells": 22,
+    "code_cells": 11,
+    "execution_counts": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "inline_figures": 6,
+    "errors": [],
+    "fresh_kernel_execution_seconds": 6.4
+  },
+  "pdf": {
+    "file": "sampling_first_teachers_guide.pdf",
+    "pages": 11,
+    "bytes": 3320560,
+    "latex_engine": "pdfTeX 1.40.29 (TeX Live 2026)",
+    "full_build_passes": 3,
+    "retained_final_log_checked": true,
+    "warnings": [],
+    "cyrillic_text_verified_on_every_page": true,
+    "all_pages_rendered": true,
+    "visual_review": "All pages reviewed in contact sheet; pages 1,6,9,10,11 and all four vector figures reviewed enlarged."
+  },
+  "assets": [
+    {
+      "file": "assets/gibbs_diagnostics.pdf",
+      "bytes": 790240,
+      "pages": 1
+    },
+    {
+      "file": "assets/gibbs_geometry.pdf",
+      "bytes": 720792,
+      "pages": 1
+    },
+    {
+      "file": "assets/markov_convergence.pdf",
+      "bytes": 716928,
+      "pages": 1
+    },
+    {
+      "file": "assets/rejection_geometry.pdf",
+      "bytes": 733736,
+      "pages": 1
+    }
+  ],
+  "dependencies": {
+    "python": "3.9.7",
+    "numpy": "1.19.5",
+    "scipy": "1.10.1",
+    "matplotlib": "3.3.4",
+    "IPython": "8.15.0",
+    "nbformat": "5.10.4",
+    "nbclient": "0.7.4",
+    "PyMuPDF": "1.26.5"
+  },
+  "sha256": {
+    "sampling_first_solutions.ipynb": "37e52ee3704c70bf27b34d9121cfc9f0de8b40349c16d64305a965b6c5d695df",
+    "sampling_first_teachers_guide.tex": "e3d13c44acd60f6aa90e0fb7d8d7b16de5bb198ceae961b974623a158dee09f2",
+    "sampling_first_teachers_guide.pdf": "f7c358d7fa00a12ea30a34acc411b308784cbeb43fb785dd73e3b460af994e98",
+    "build_sampling_notebook.py": "4b006e6587d20e7e576da3e624785c7f1438790a34b30540de44e07681785f83",
+    "execute_notebook.py": "9b333e1fd664779fc163151a3cbf9afd710eed1e08f42f2d06b83cbd0d0fc9e6",
+    "build.sh": "12ccb95405cd185cfc09a09dae9a7b146753bebe9c3dd5545aa41604ba7cb6bb",
+    "requirements.txt": "7fb759d4bc737e4cafe7053e687033daf532cc8b6cb19e7ee82429d391e8559f"
+  }
+}

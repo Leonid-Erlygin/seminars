@@ -10,6 +10,7 @@ import json
 import textwrap
 
 from bnn_mnist_cells import add_mnist_section
+from bnn_ivon_cells import add_ivon_section
 
 HERE = Path(__file__).resolve().parent
 CELLS = []
@@ -62,6 +63,8 @@ classifier on four one-dimensional intervals. The geometry makes individual
 dropout functions and their disagreement visible. Three tasks implement
 Monte Carlo prediction, an uncertainty decomposition, and label acquisition.
 Task 4 extends the comparison to MNIST with a dropout CNN on a GPU.
+An additional supplied example compares MC dropout with IVON's explicit
+Gaussian weight posterior, on the interval data and on GPU MNIST.
 
 Tasks 1–3 form a 90-minute core. Task 4 is a separate practical, and the two
 appendices explore data geometry, Monte Carlo budget, and batch redundancy.
@@ -76,12 +79,14 @@ markdown(
 Use Python 3.9+ with NumPy, Matplotlib, PyTorch, IPython, and a notebook
 interface. Task 4 also needs a matching torchvision installation and a CUDA
 GPU; it downloads public MNIST once and then reuses a local data cache.
+The supplied IVON example additionally uses `ivon-opt==0.1.3`.
 Install `requirements.txt` in your chosen environment. Run cells in order.
 
 Unfinished tasks raise `NotImplementedError` and their dependent experiments
 are skipped. Incorrect completed implementations fail their checks visibly.
 `RUN_MNIST` enables the GPU practical; without CUDA its training is explicitly
-skipped. `RUN_APPENDICES` enables additional controlled experiments.
+skipped. `RUN_IVON` enables the fully implemented IVON/dropout comparison,
+independently of completed tasks. `RUN_APPENDICES` enables additional controlled experiments.
 
 All small examples run on a CPU. Fixed seeds make comparisons repeatable on
 a given software stack; last digits can differ between versions or devices.
@@ -102,6 +107,7 @@ from torch import nn
 from IPython.display import display, Markdown
 
 RUN_MNIST = True
+RUN_IVON = True
 RUN_APPENDICES = False
 SAVE_FIGURES = False
 TOY_TRAIN_STEPS = 4000
@@ -1180,6 +1186,7 @@ BALD dominates random or entropy acquisition.
 )
 
 add_mnist_section(markdown, code, exercise, answer)
+add_ivon_section(markdown, code)
 
 markdown(
     r"""
@@ -1363,6 +1370,10 @@ ICML, 2017.
 [4] Andreas Kirsch, Joost van Amersfoort, and Yarin Gal.
 [BatchBALD: Efficient and Diverse Batch Acquisition for Deep Bayesian Active Learning](https://proceedings.neurips.cc/paper/2019/hash/95323660ed2124450caaac2c46b5ed90-Abstract.html).
 NeurIPS, 2019.
+
+[5] Yuesong Shen et al.
+[Variational Learning is Effective for Large Deep Networks](https://proceedings.mlr.press/v235/shen24b.html).
+ICML, 2024. [Official IVON PyTorch implementation](https://github.com/team-approx-bayes/ivon).
 
 The original interval dictionary, observation grid, sigmoid architecture,
 dropout placement, and training schedule are adapted from the first example

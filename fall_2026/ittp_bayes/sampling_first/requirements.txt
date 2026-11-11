@@ -1,0 +1,8 @@
+# Python 3.9+. Examples run on a CPU and do not download data.
+numpy>=1.20
+scipy>=1.7
+matplotlib>=3.3
+ipython>=7
+ipykernel>=6
+nbformat>=5.4
+nbclient>=0.7

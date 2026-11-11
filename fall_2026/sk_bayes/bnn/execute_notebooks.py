@@ -14,7 +14,7 @@ from nbclient import NotebookClient
 HERE = Path(__file__).resolve().parent
 
 
-def execute(edition, appendices=False, skip_mnist=False, reuse_mnist=False, timeout=1800):
+def execute(edition, appendices=False, skip_mnist=False, reuse_mnist=False, timeout=1800, skip_ivon=False):
     path = HERE / f"bnn_{edition}.ipynb"
     notebook = nbformat.read(path, as_version=4)
     nbformat.validate(notebook)
@@ -27,6 +27,8 @@ def execute(edition, appendices=False, skip_mnist=False, reuse_mnist=False, time
                 )
             if skip_mnist:
                 cell.source = cell.source.replace("RUN_MNIST = True", "RUN_MNIST = False")
+            if skip_ivon:
+                cell.source = cell.source.replace("RUN_IVON = True", "RUN_IVON = False")
             if reuse_mnist:
                 cell.source = cell.source.replace(
                     "MNIST_RETRAIN = True", "MNIST_RETRAIN = False"
@@ -62,7 +64,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--skip-mnist",
         action="store_true",
-        help="Run Task4 CPU checks without the GPU experiment",
+        help="Run CPU checks and comparisons without either GPU experiment",
+    )
+    parser.add_argument(
+        "--skip-ivon", action="store_true", help="Skip the supplied IVON comparison"
     )
     parser.add_argument(
         "--reuse-mnist",
@@ -72,4 +77,4 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=int, default=1800)
     args = parser.parse_args()
     for edition in ["student", "solutions"] if args.edition == "all" else [args.edition]:
-        execute(edition, args.appendices, args.skip_mnist, args.reuse_mnist, args.timeout)
+        execute(edition, args.appendices, args.skip_mnist, args.reuse_mnist, args.timeout, args.skip_ivon)
